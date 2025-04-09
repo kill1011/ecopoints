@@ -1,0 +1,162 @@
+.history-container {
+  padding: 80px 20px 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+     /* Add margin for sidebar width */
+  transition: margin-left 0.3s ease;
+}
+
+/* When sidebar is closed */
+.sidebar-closed .history-container {
+  margin-left: 0;
+  
+}
+
+.history-container h1 {
+  color: #1a7431;
+  margin-bottom: 20px;
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+}
+
+.history-table-container {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  overflow-x: auto;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 800px;
+}
+
+.history-table th {
+  background-color: #1a7431;
+  color: white;
+  padding: 12px;
+  text-align: left;
+}
+
+.history-table td {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.status.approved {
+  background-color: #e8f5e9;
+  color: #1b5e20;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  background: white;
+  border-radius: 8px;
+  color: #666;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.empty-state-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.empty-state i {
+  font-size: 48px;
+  color: #9e9e9e;
+}
+
+.empty-state h2 {
+  color: #424242;
+  margin: 0;
+  font-size: 24px;
+}
+
+.empty-state p {
+  color: #757575;
+  margin: 0;
+  font-size: 16px;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+.error-message {
+  background-color: #ffebee;
+  color: #c62828;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  border-left: 4px solid #c62828;
+}
+
+/* Responsive styles */
+@media screen and (max-width: 768px) {
+  .history-container {
+    margin-left: 0;
+    padding: 60px 15px 15px;
+  }
+
+  .history-table {
+    display: block;
+  }
+
+  .history-table thead {
+    display: none;
+  }
+
+  .history-table tbody {
+    display: block;
+  }
+
+  .history-table tr {
+    display: block;
+    margin-bottom: 1rem;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    padding: 1rem;
+  }
+
+  .history-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border: none;
+  }
+
+  .history-table td::before {
+    content: attr(data-label);
+    font-weight: bold;
+    margin-right: 1rem;
+  }
+}
+
+/* Add dark mode support */
+@media (prefers-color-scheme: dark) {
+  .history-table-container {
+    background: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .history-table th {
+    background-color: #1a5e2d;
+  }
+
+  .history-table td {
+    border-bottom-color: #404040;
+  }
+}

@@ -1,0 +1,29 @@
+.app-container {
+  min-height: 100vh;
+  background-color: #f9fafb;
+}
+
+.main-container {
+  padding-top: var(--header-height);
+  padding-left: var(--sidebar-width);
+  transition: padding-left 0.3s ease;
+}
+
+.content-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.page-title {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 768px) {
+  .main-container {
+    padding-left: 0;
+  }
+}

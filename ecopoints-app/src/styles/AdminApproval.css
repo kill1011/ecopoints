@@ -1,0 +1,276 @@
+/* Base styles */
+.admin-approval-container {
+  padding: 80px 20px 20px;
+  max-width: 1000px;
+  margin: 0 auto;
+  margin-left: 250px; /* Add margin for sidebar width */
+  width: calc(100% - 250px); /* Adjust width to account for sidebar */
+  transition: margin-left 0.3s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.admin-approval-container h1 {
+  margin-top: 70px;
+  color: #1a7431;
+  margin-bottom: 20px;
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+}
+
+.requests-table-container {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  overflow-x: auto;
+  margin: 0 -20px; /* Negative margin for small screens */
+  padding: 0 20px;
+}
+
+.requests-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.requests-table th,
+.requests-table td {
+  padding: 1rem;
+  text-align: left;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.requests-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+.status {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.status.pending {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.actions button {
+  margin-right: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.approve-btn {
+  background-color: #28a745;
+  color: white;
+}
+
+.reject-btn {
+  background-color: #dc3545;
+  color: white;
+}
+
+.approve-btn:hover {
+  background-color: #388e3c;
+}
+
+.reject-btn:hover {
+  background-color: #d32f2f;
+}
+
+.message {
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 4px;
+}
+
+.message.success {
+  background-color: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.message.error {
+  background-color: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.message.info {
+  background-color: #e3f2fd;
+  color: #1976d2;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  border-left: 4px solid #1976d2;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+/* When sidebar is closed */
+.sidebar-closed .admin-approval-container {
+  margin-left: 0;
+  width: 100%;
+}
+
+/* Responsive table styles */
+@media screen and (max-width: 768px) {
+  .requests-table {
+    display: block; 
+  }
+
+  .requests-table thead {
+    display: none; 
+  }
+
+  .requests-table tbody {
+    display: block;
+  }
+
+  .requests-table tr {
+    display: block;
+    margin-bottom: 1rem;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    padding: 1rem;
+  }
+
+  .requests-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border: none;
+  }
+
+  .requests-table td::before {
+    content: attr(data-label);
+    font-weight: bold;
+    margin-right: 1rem;
+  }
+
+  .actions {
+    justify-content: flex-end;
+  }
+
+  .admin-approval-container {
+    margin-left: 0;
+    width: 100%;
+    padding: 60px 15px 15px;
+  }
+
+  .requests-table-container {
+    margin: 0;
+    padding: 0 15px;
+  }
+}
+
+/* Responsive button styles */
+@media screen and (max-width: 480px) {
+  .approve-btn,
+  .reject-btn {
+    padding: 8px;
+    width: 100%;
+    margin-bottom: 0.5rem;
+  }
+
+  .actions {
+    flex-direction: column;
+    width: 100%;
+  }
+}
+
+/* Responsive message styles */
+@media screen and (max-width: 480px) {
+  .message {
+    margin: 1rem -20px;
+    border-radius: 0;
+  }
+
+  .empty-state {
+    margin: 1rem -20px;
+    border-radius: 0;
+    padding: 20px;
+  }
+}
+
+/* Adjust font sizes for smaller screens */
+@media screen and (max-width: 480px) {
+  .status {
+    font-size: 12px;
+    padding: 2px 6px;
+  }
+
+  .requests-table td {
+    font-size: 14px;
+  }
+}
+
+/* Add smooth transitions */
+.requests-table tr,
+.approve-btn,
+.reject-btn,
+.message {
+  transition: all 0.3s ease;
+}
+
+/* High-resolution screen adjustments */
+@media screen and (min-width: 1440px) {
+  .admin-approval-container {
+    max-width: 1400px;
+  }
+
+  .requests-table th,
+  .requests-table td {
+    padding: 16px;
+  }
+}
+
+/* Print styles */
+@media print {
+  .actions,
+  .approve-btn,
+  .reject-btn {
+    display: none;
+  }
+
+  .admin-approval-container {
+    padding: 0;
+  }
+
+  .requests-table-container {
+    box-shadow: none;
+  }
+}
+
+/* Add this for better number alignment */
+.amount-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.requests-table td[data-label="Amount (₱)"],
+.requests-table td[data-label="Current Balance"] {
+  font-family: 'Roboto Mono', monospace;
+  text-align: right;
+}

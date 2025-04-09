@@ -1,0 +1,160 @@
+.admin-sidebar {
+  width: 280px;
+  background-color: white;
+  min-height: calc(100vh - 60px); /* Subtract footer height */
+  padding: 20px 0;
+  transition: all 0.3s ease;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+  position: fixed;
+  left: 0;
+  top: 60px; /* Adjust for header height */
+  bottom: 60px; /* Space for footer */
+  overflow-y: auto; /* Enable scrolling if content is too long */
+  z-index: 100;
+}
+
+.admin-sidebar.open {
+  transform: translateX(0);
+}
+
+.admin-sidebar nav {
+  padding-top: 60px; /* Space for header */
+}
+
+.admin-sidebar nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.admin-sidebar nav ul li {
+  margin: 8px 16px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.admin-sidebar nav ul li a,
+.admin-sidebar nav ul li button {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px;
+  color: #05673e;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  border-radius: 8px;
+}
+
+.admin-sidebar nav ul li.active a {
+  background-color: #16213e;
+  color: #00ff95;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.admin-sidebar nav ul li a:hover,
+.admin-sidebar nav ul li button:hover {
+  background-color: #16213e;
+  transform: translateX(5px);
+}
+
+.admin-sidebar nav ul li svg {
+  margin-right: 12px;
+  width: 20px;
+  height: 20px;
+}
+
+.dashboard-content {
+  margin-left: 280px;
+  padding: 20px;
+  padding-bottom: 80px; /* Add extra padding for footer */
+  min-height: calc(100vh - 120px); /* Account for header and footer */
+}
+
+.main-content {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 60px; /* Space for footer */
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.logout-button {
+  position: absolute; /* Change from fixed to absolute */
+  bottom: 120px; /* Adjust bottom spacing */
+  left: 16px;
+  width: calc(280px - 32px); /* Match sidebar width minus padding */
+  padding: 14px 20px;
+  background-color: #1a1a2e;
+  color: #ff6b6b !important;
+  border-radius: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-weight: 500;
+  text-align: center;
+  z-index: 101; /* Keep it above sidebar content */
+}
+
+.logout-button:hover {
+  background-color: rgba(255, 107, 107, 0.1) !important;
+  color: #ff8585 !important;
+}
+
+/* Add this new CSS for footer */
+.footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background-color: #1a1a2e;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .admin-sidebar {
+    transform: translateX(-100%);
+    z-index: 1000;
+    top: 60px;
+    min-height: calc(100vh - 120px); /* Adjust for mobile */
+    bottom: 120px; /* More space for mobile footer */
+  }
+
+  .admin-sidebar.open {
+    transform: translateX(0);
+  }
+
+  .admin-sidebar nav {
+    padding-top: 80px;
+  }
+
+  .dashboard-content {
+    margin-left: 0;
+    padding-bottom: 80px;
+  }
+
+  .main-content {
+    margin-bottom: 60px;
+  }
+
+  .logout-button {
+    width: calc(280px - 32px); /* Keep consistent with desktop */
+    left: 16px; /* Reset left position */
+    transform: none; /* Remove transform */
+    bottom: 20px; /* Consistent spacing */
+    max-width: none; /* Remove max-width limitation */
+  }
+}
+
+/* Add smooth transition for all hover effects */
+* {
+  transition: all 0.3s ease;
+}
