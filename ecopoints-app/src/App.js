@@ -17,7 +17,34 @@ import AdminSettings from './admin/AdminSettings';
 import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
+// frontend/src/App.js (React example)
+import { useEffect, useState } from "react";
 
+function App() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    fetch("https://my-backend.vercel.app/api/hello")
+      .then((res) => res.json())
+      .then((data) => setData(data.message));
+  }, []);
+
+  return <div>{data || "Loading..."}</div>;
+}
+
+function App() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/hello")
+      .then((res) => res.json())
+      .then((data) => setData(data.message));
+  }, []);
+
+  return <div>{data || "Loading..."}</div>;
+}
+
+// src/App.js
 function App() { 
   useEffect(() => {
     const testConnection = async () => {

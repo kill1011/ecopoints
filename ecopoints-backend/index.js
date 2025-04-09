@@ -9,6 +9,12 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+// api/hello.js
+module.exports = (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "https://my-frontend.vercel.app");
+  res.json({ message: "Hello from the backend!" });
+};
+
 
 // Update CORS configuration for direct connection
 app.use(cors({
