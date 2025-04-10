@@ -17,31 +17,47 @@ import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
 
-const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app'; // Default to deployed backend
+const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app/'; // Default to deployed backend
 
 function App() {
   const [data, setData] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(false); // Start false, but don’t block UI
 
   useEffect(() => {
     const checkBackendConnection = async () => {
       try {
-        console.log('Attempting Supabase connection...');
-        const { data: supabaseData, error } = await supabase
-          .from('users') // Ensure this table exists
-          .select('count', { count: 'exact' });
-        if (error) throw error;
-        console.log('Supabase connection successful:', supabaseData);
-        setData('Connected to Supabase');
+        console.log('Connecting to:', API_URL);
+        const response = await fetch(`${API_URL}/api/hello`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+        const result = await response.json();
+        console.log('Backend response:', result);
+        setData(result.message);
         setIsConnected(true);
       } catch (error) {
-        console.error('Backend connection error:', error.message); // Line 42
-        console.error('Full error details:', error);
-        setIsConnected(false);
+        console.error('Backend connection error:', error.message);
+        setIsConnected(false); // Don’t block rendering
+      }
+    };
+
+    const testSupabaseConnection = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('count');
+        if (error) throw error;
+        console.log('Supabase connection successful:', data);
+      } catch (error) {
+        console.error('Supabase connection error:', error.message);
       }
     };
 
     checkBackendConnection();
+    testSupabaseConnection();
   }, []);
 
   return (
@@ -49,6 +65,7 @@ function App() {
       <BrowserRouter>
         <div className="app">
           <div className="content">
+            {/* Always render Routes, show connection status separately */}
             <Routes>
               <Route path="/" element={<LoginPage />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -62,6 +79,7 @@ function App() {
               <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
               <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
             </Routes>
+            {/* Optional connection status */}
             {!isConnected && (
               <div className="connection-status">
                 Backend Status: {data || 'Not connected'} <br />
