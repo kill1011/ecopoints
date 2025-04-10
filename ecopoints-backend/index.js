@@ -22,10 +22,25 @@ app.use(cors({
 
 app.use(express.json());
 
-// Hello endpoint
-app.get('/api/hello', (req, res) => {
-  res.json({ message: "Hello from the backend!" });
-});
+const checkBackendConnection = async () => {
+  try {
+    console.log('Connecting to:', API_URL);
+    const response = await fetch(`${API_URL}/api/hello`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+    const result = await response.json();
+    console.log('Backend response:', result);
+    setData(result.message);
+    setIsConnected(true);
+  } catch (error) {
+    console.error('Backend connection error:', error.message);
+    setIsConnected(false);
+  }
+};
 
 // Root endpoint
 app.get('/', (req, res) => {
