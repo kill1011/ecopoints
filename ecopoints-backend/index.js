@@ -6,7 +6,8 @@ import bcrypt from 'bcrypt';
 import { supabase } from './config/supabase.js';
 
 dotenv.config();
-
+const express = require('express');
+const cors = require('cors');
 const app = express();
 
 // CORS configuration
@@ -15,6 +16,8 @@ app.use(cors({
     'http://localhost:3000',
     'https://ecopoints-teal.vercel.app' // Update with your actual frontend URL if deployed
   ],
+
+  
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']

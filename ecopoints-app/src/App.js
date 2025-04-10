@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route } from 'react-router-dom'; // No BrowserRouter here
+import { Routes, Route } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -17,7 +17,7 @@ import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
 
-const API_URL = process.env.REACT_APP_API_URL; // No default, must be set in env
+const API_URL = process.env.REACT_APP_API_URL;
 
 function App() {
   const [data, setData] = useState(null);
@@ -29,30 +29,41 @@ function App() {
         if (!API_URL) {
           throw new Error('REACT_APP_API_URL is not defined in environment variables');
         }
-        console.log('Connecting to backend:', API_URL);
+        console.log('Attempting to connect to backend:', API_URL);
+
         const response = await fetch(`${API_URL}/api/hello`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
           },
         });
+
+        console.log('Response status:', response.status);
+
         if (!response.ok) {
           throw new Error(`HTTP error! Status: ${response.status}`);
         }
+
         const result = await response.json();
         console.log('Backend response:', result);
+
+        if (!result.message) {
+          throw new Error('Response missing "message" field');
+        }
+
         setData(result.message);
         setIsConnected(true);
       } catch (error) {
         console.error('Backend connection error:', error.message); // Line 44
         setIsConnected(false);
+        setData(`Connection failed: ${error.message}`); // Show error in UI
       }
     };
 
     const testSupabaseConnection = async () => {
       try {
         const { data: supabaseData, error } = await supabase
-          .from('users') // Ensure this table exists
+          .from('users')
           .select('count', { count: 'exact' });
         if (error) throw error;
         console.log('Supabase connection successful:', supabaseData);
@@ -82,12 +93,10 @@ function App() {
             <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
             <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
           </Routes>
-          {!isConnected && (
-            <div className="connection-status">
-              Backend Status: {data || 'Not connected'} <br />
-              Error: Check console for details
-            </div>
-          )}
+          <div className="connection-status">
+            Backend Status: {isConnected ? 'Connected' : 'Not connected'} <br />
+            {data && `Message: ${data}`}
+          </div>
         </div>
         <Footer />
       </div>
