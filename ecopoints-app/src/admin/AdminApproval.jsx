@@ -5,7 +5,6 @@ import Sidebar from '../components/AdminSidebar';
 import { supabase } from '../config/supabase';
 import '../styles/AdminApproval.css';
 
-
 const AdminApproval = () => {
   const navigate = useNavigate();
   const [pendingRequests, setPendingRequests] = useState([]);
@@ -25,7 +24,6 @@ const AdminApproval = () => {
         throw new Error('No active session');
       }
 
-      // First get all pending requests
       const { data: requests, error: requestsError } = await supabase
         .from('redemption_requests')
         .select('*')
@@ -34,7 +32,6 @@ const AdminApproval = () => {
 
       if (requestsError) throw requestsError;
 
-      // Then get user details for each request
       const transformedRequests = await Promise.all(requests.map(async (request) => {
         const { data: userData, error: userError } = await supabase
           .from('users')
@@ -75,7 +72,6 @@ const AdminApproval = () => {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        // Get current session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
         if (sessionError) throw sessionError;
@@ -85,7 +81,6 @@ const AdminApproval = () => {
           return;
         }
 
-        // Verify admin status from database
         const { data: userData, error: userError } = await supabase
           .from('users')
           .select('is_admin')
@@ -99,7 +94,6 @@ const AdminApproval = () => {
           return;
         }
 
-        // Store admin status
         localStorage.setItem('is_admin', 'true');
         
         await fetchPendingRequests();
@@ -127,7 +121,6 @@ const AdminApproval = () => {
 
       if (data && data.length > 0) {
         setNotifications(data);
-        // Show notification using browser API
         data.forEach(notification => {
           if (Notification.permission === 'granted') {
             new Notification('New Redemption Request', {
@@ -148,7 +141,6 @@ const AdminApproval = () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('No active session');
 
-      // First get the redemption request
       const { data: request, error: requestError } = await supabase
         .from('redemption_requests')
         .select('*')
@@ -164,7 +156,6 @@ const AdminApproval = () => {
         throw new Error('Redemption request not found');
       }
 
-      // Get user details separately
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('name, money')
@@ -176,7 +167,6 @@ const AdminApproval = () => {
         throw new Error('Failed to fetch user details');
       }
 
-      // Update request status
       const { error: updateError } = await supabase
         .from('redemption_requests')
         .update({ 
@@ -188,19 +178,17 @@ const AdminApproval = () => {
 
       if (updateError) throw updateError;
 
-      // If approved, update user's money balance
       if (isApproved) {
         const { error: balanceError } = await supabase
           .from('users')
           .update({ 
-            money: userData.money - request.amount 
+            money: userData.money + request.amount // Add amount to money on approval
           })
           .eq('id', request.user_id);
 
         if (balanceError) throw balanceError;
       }
 
-      // Create user notification
       await supabase
         .from('user_notifications')
         .insert({
@@ -211,13 +199,11 @@ const AdminApproval = () => {
           created_at: new Date().toISOString()
         });
 
-      // Clear admin notification
       await supabase
         .from('admin_notifications')
         .update({ status: 'read' })
         .eq('request_id', requestId);
 
-      // Remove the processed request from local state
       setPendingRequests(current => 
         current.filter(req => req.id !== requestId)
       );
@@ -225,7 +211,6 @@ const AdminApproval = () => {
       setMessage(`Redemption request ${isApproved ? 'approved' : 'rejected'} successfully`);
       setMessageType('success');
 
-      // Clear notifications related to this request
       setNotifications(current => 
         current.filter(notif => notif.request_id !== requestId)
       );
@@ -316,7 +301,6 @@ const AdminApproval = () => {
           </div>
         )}
       </div>
-      
     </div>
   );
 };
