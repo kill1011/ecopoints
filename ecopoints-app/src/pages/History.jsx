@@ -13,8 +13,10 @@ import '../styles/History.css';
 
 const History = () => {
   const [transactions, setTransactions] = useState([]);
+  const [filteredTransactions, setFilteredTransactions] = useState([]); // For search/filter
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [searchQuery, setSearchQuery] = useState(''); // For search input
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -25,23 +27,19 @@ const History = () => {
     try {
       setLoading(true);
       
-      // Get current session
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError || !session) {
         throw new Error('Authentication required');
       }
 
-      // Get all transactions including redemption requests
       const [{ data: redemptionData, error: redemptionError }, { data: recyclableData, error: recyclableError }] = await Promise.all([
-        // Get redemption requests
         supabase
           .from('redemption_requests')
           .select('*')
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
 
-        // Get recyclable transactions
         supabase
           .from('recyclable_transactions')
           .select('*')
@@ -52,7 +50,6 @@ const History = () => {
       if (redemptionError) throw redemptionError;
       if (recyclableError) throw recyclableError;
 
-      // Transform redemption requests
       const redemptions = (redemptionData || []).map(item => ({
         id: item.id,
         type: 'redemption',
@@ -63,7 +60,6 @@ const History = () => {
         processed_at: item.processed_at
       }));
 
-      // Transform recyclable transactions
       const recyclables = (recyclableData || []).map(item => ({
         id: item.id,
         type: item.type,
@@ -74,17 +70,18 @@ const History = () => {
         status: 'completed'
       }));
 
-      // Combine and sort all transactions by date
       const allTransactions = [...redemptions, ...recyclables]
         .sort((a, b) => new Date(b.date) - new Date(a.date));
 
       setTransactions(allTransactions);
+      setFilteredTransactions(allTransactions); // Initialize filtered list
       setError('');
 
     } catch (error) {
       console.error('Error fetching history:', error);
       setError('Failed to load transaction history: ' + error.message);
       setTransactions([]);
+      setFilteredTransactions([]);
       
       if (error.message.includes('Authentication')) {
         navigate('/login');
@@ -92,6 +89,21 @@ const History = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Search/filter transactions based on type, status, or date
+  const handleSearch = (e) => {
+    const query = e.target.value.toLowerCase();
+    setSearchQuery(query);
+
+    const filtered = transactions.filter((transaction) => {
+      const typeMatch = transaction.type.toLowerCase().includes(query);
+      const statusMatch = transaction.status.toLowerCase().includes(query);
+      const dateMatch = formatDate(transaction.date).toLowerCase().includes(query);
+      return typeMatch || statusMatch || dateMatch;
+    });
+
+    setFilteredTransactions(filtered);
   };
 
   const formatDate = (dateString) => {
@@ -122,7 +134,8 @@ const History = () => {
               <input
                 type="text"
                 placeholder="Search transactions..."
-                onChange={(e) => {/* Add search functionality */}}
+                value={searchQuery}
+                onChange={handleSearch}
               />
             </div>
           </div>
@@ -141,11 +154,11 @@ const History = () => {
               Try Again
             </button>
           </div>
-        ) : transactions.length === 0 ? (
+        ) : filteredTransactions.length === 0 ? (
           <div className="empty-state">
             <FontAwesomeIcon icon={faHistory} className="empty-icon" />
-            <h2>No Transactions Yet</h2>
-            <p>Your transaction history will appear here</p>
+            <h2>No Transactions Found</h2>
+            <p>{searchQuery ? 'No matches for your search' : 'Your transaction history will appear here'}</p>
           </div>
         ) : (
           <div className="history-content">
@@ -162,7 +175,7 @@ const History = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((transaction) => (
+                  {filteredTransactions.map((transaction) => (
                     <tr key={transaction.id} className={transaction.type}>
                       <td>{formatDate(transaction.date)}</td>
                       <td>
