@@ -8,17 +8,13 @@ import { supabase } from './config/supabase.js';
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 5000;
-// api/hello.js
-module.exports = (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "https://my-frontend.vercel.app");
-  res.json({ message: "Hello from the backend!" });
-};
 
-
-// Update CORS configuration for direct connection
+// CORS configuration
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: [
+    'http://localhost:3000',
+    'https://my-frontend.vercel.app'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
@@ -26,12 +22,17 @@ app.use(cors({
 
 app.use(express.json());
 
-// Simple root endpoint
+// Hello endpoint (removed module.exports)
+app.get('/api/hello', (req, res) => {
+  res.json({ message: "Hello from the backend!" });
+});
+
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({ message: 'EcoPoints API is running' });
 });
 
-// Update health check endpoint
+// Health check endpoint
 app.get('/api/health', (req, res) => {
   console.log('Health check received from:', req.headers.origin);
   try {
@@ -46,13 +47,11 @@ app.get('/api/health', (req, res) => {
   }
 });
 
-// Login endpoint with better error handling
+// Login endpoint
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   
   try {
-    console.log('Login attempt for:', email);
-
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
@@ -60,13 +59,11 @@ app.post('/api/login', async (req, res) => {
       .single();
 
     if (error || !user) {
-      console.log('Login failed: User not found');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      console.log('Login failed: Invalid password');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -76,7 +73,6 @@ app.post('/api/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    console.log('Login successful for:', email);
     res.json({
       token,
       user: {
@@ -92,14 +88,11 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Signup endpoint with better error handling
+// Signup endpoint
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
 
   try {
-    console.log('Starting signup for:', email);
-
-    // Check if user already exists
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -110,7 +103,9 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // Create auth user in Supabase
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -119,54 +114,35 @@ app.post('/api/auth/signup', async (req, res) => {
 
     if (authError) throw authError;
 
-    // Hash password for users table
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Create user profile
-    const { data: profileData, error: profileError } = await supabase
+    const { error: profileError } = await supabase
       .from('users')
       .insert([{
         id: authData.user.id,
-        email: email,
-        name: name,
+        email,
+        name,
         password: hashedPassword,
         points: 0,
         money: 0,
         is_admin: false
-      }])
-      .single();
+      }]);
 
     if (profileError) throw profileError;
 
-    console.log('Signup successful for:', email);
     res.status(201).json({
       message: 'Registration successful!',
       user: authData.user
     });
-
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({
-      message: 'Registration failed',
-      error: error.message
-    });
+    res.status(500).json({ message: 'Registration failed', error: error.message });
   }
 });
 
-// Enhanced server startup
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-
-// Error handling for unhandled routes
+// Error handling middleware
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
   res.status(500).json({ 
@@ -174,3 +150,12 @@ app.use((err, req, res, next) => {
     error: err.message
   });
 });
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+// If you need to export the app (for testing or other purposes)
+// export default app;
