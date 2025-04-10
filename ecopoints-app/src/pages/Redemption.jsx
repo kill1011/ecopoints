@@ -155,7 +155,7 @@ const Redemption = () => {
         .insert({
           user_id: session.user.id,
           amount: amount,
-          points: pointsNeeded, // Now matches the schema
+          points: pointsNeeded, // Now matches the schema with points column added
           status: 'pending',
           created_at: new Date().toISOString()
         })
