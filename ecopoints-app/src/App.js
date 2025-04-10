@@ -17,11 +17,11 @@ import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_URL = process.env.REACT_APP_API_URL || '//https://ecopoints-teal.vercel.app/-backend.vercel.app'; // Default to deployed backend
 
 function App() {
   const [data, setData] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(false); // Start false, but don’t block UI
 
   useEffect(() => {
     const checkBackendConnection = async () => {
@@ -40,7 +40,7 @@ function App() {
         setIsConnected(true);
       } catch (error) {
         console.error('Backend connection error:', error.message);
-        setIsConnected(false);
+        setIsConnected(false); // Don’t block rendering
       }
     };
 
@@ -65,24 +65,24 @@ function App() {
       <BrowserRouter>
         <div className="app">
           <div className="content">
-            {isConnected ? (
-              <Routes>
-                <Route path="/" element={<LoginPage />} />
-                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                <Route path="/insert" element={<ProtectedRoute><InsertPage /></ProtectedRoute>} />
-                <Route path="/redemption" element={<ProtectedRoute><Redemption /></ProtectedRoute>} />
-                <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
-                <Route path="/contact" element={<ProtectedRoute><ContactPage /></ProtectedRoute>} />
-                <Route path="/admin" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
-                <Route path="/admin/approval" element={<ProtectedAdminRoute><AdminApproval /></ProtectedAdminRoute>} />
-                <Route path="/admin/history" element={<ProtectedAdminRoute><AdminHistory /></ProtectedAdminRoute>} />
-                <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
-                <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
-              </Routes>
-            ) : (
-              <div>
-                Connecting to server... <br />
-                Status: {data || 'No response yet'} <br />
+            {/* Always render Routes, show connection status separately */}
+            <Routes>
+              <Route path="/" element={<LoginPage />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/insert" element={<ProtectedRoute><InsertPage /></ProtectedRoute>} />
+              <Route path="/redemption" element={<ProtectedRoute><Redemption /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
+              <Route path="/contact" element={<ProtectedRoute><ContactPage /></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
+              <Route path="/admin/approval" element={<ProtectedAdminRoute><AdminApproval /></ProtectedAdminRoute>} />
+              <Route path="/admin/history" element={<ProtectedAdminRoute><AdminHistory /></ProtectedAdminRoute>} />
+              <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
+              <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
+            </Routes>
+            {/* Optional connection status */}
+            {!isConnected && (
+              <div className="connection-status">
+                Backend Status: {data || 'Not connected'} <br />
                 Error: Check console for details
               </div>
             )}
