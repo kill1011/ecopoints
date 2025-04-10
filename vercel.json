@@ -1,11 +1,18 @@
 {
-    "version": 2,
-    "builds": [
-      { "src": "ecopoints-app/package.json", "use": "@vercel/static-build" },
-      { "src": "ecopoints-backend/api/**/*.js", "use": "@vercel/node" }
-    ],
-    "routes": [
-      { "src": "/api/(.*)", "dest": "ecopoints-backend/api/$1" },
-      { "src": "/(.*)", "dest": "ecopoints-app/$1" }
-    ]
-  }
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "build"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}
