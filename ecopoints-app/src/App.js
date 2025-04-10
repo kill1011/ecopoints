@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom'; // Remove BrowserRouter
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -17,16 +17,18 @@ import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
 
-const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app/'; // Default to deployed backend
+// Use environment variable without a default (set in Vercel)
+const API_URL = process.env.REACT_APP_API_URL;
 
 function App() {
   const [data, setData] = useState(null);
-  const [isConnected, setIsConnected] = useState(false); // Start false, but don’t block UI
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     const checkBackendConnection = async () => {
       try {
-        console.log('Connecting to:', API_URL);
+        if (!API_URL) throw new Error('API_URL is not defined in environment variables');
+        console.log('Connecting to backend:', API_URL);
         const response = await fetch(`${API_URL}/api/hello`, {
           method: 'GET',
           headers: {
@@ -40,17 +42,17 @@ function App() {
         setIsConnected(true);
       } catch (error) {
         console.error('Backend connection error:', error.message);
-        setIsConnected(false); // Don’t block rendering
+        setIsConnected(false);
       }
     };
 
     const testSupabaseConnection = async () => {
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('count');
+        const { data: supabaseData, error } = await supabase
+          .from('users') // Ensure this table exists
+          .select('count', { count: 'exact' });
         if (error) throw error;
-        console.log('Supabase connection successful:', data);
+        console.log('Supabase connection successful:', supabaseData);
       } catch (error) {
         console.error('Supabase connection error:', error.message);
       }
@@ -62,34 +64,30 @@ function App() {
 
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <div className="app">
-          <div className="content">
-            {/* Always render Routes, show connection status separately */}
-            <Routes>
-              <Route path="/" element={<LoginPage />} />
-              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-              <Route path="/insert" element={<ProtectedRoute><InsertPage /></ProtectedRoute>} />
-              <Route path="/redemption" element={<ProtectedRoute><Redemption /></ProtectedRoute>} />
-              <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
-              <Route path="/contact" element={<ProtectedRoute><ContactPage /></ProtectedRoute>} />
-              <Route path="/admin" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
-              <Route path="/admin/approval" element={<ProtectedAdminRoute><AdminApproval /></ProtectedAdminRoute>} />
-              <Route path="/admin/history" element={<ProtectedAdminRoute><AdminHistory /></ProtectedAdminRoute>} />
-              <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
-              <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
-            </Routes>
-            {/* Optional connection status */}
-            {!isConnected && (
-              <div className="connection-status">
-                Backend Status: {data || 'Not connected'} <br />
-                Error: Check console for details
-              </div>
-            )}
-          </div>
-          <Footer />
+      <div className="app">
+        <div className="content">
+          <Routes>
+            <Route path="/" element={<LoginPage />} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/insert" element={<ProtectedRoute><InsertPage /></ProtectedRoute>} />
+            <Route path="/redemption" element={<ProtectedRoute><Redemption /></ProtectedRoute>} />
+            <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
+            <Route path="/contact" element={<ProtectedRoute><ContactPage /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
+            <Route path="/admin/approval" element={<ProtectedAdminRoute><AdminApproval /></ProtectedAdminRoute>} />
+            <Route path="/admin/history" element={<ProtectedAdminRoute><AdminHistory /></ProtectedAdminRoute>} />
+            <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
+            <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
+          </Routes>
+          {!isConnected && (
+            <div className="connection-status">
+              Backend Status: {data || 'Not connected'} <br />
+              Error: Check console for details
+            </div>
+          )}
         </div>
-      </BrowserRouter>
+        <Footer />
+      </div>
     </AuthProvider>
   );
 }
