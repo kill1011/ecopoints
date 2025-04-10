@@ -13,7 +13,7 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://my-frontend.vercel.app' // Update with your actual frontend URL if deployed
+    'https://ecopoints-teal.vercel.app/' // Update with your actual frontend URL if deployed
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
