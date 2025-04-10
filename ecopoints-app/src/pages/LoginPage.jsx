@@ -29,7 +29,6 @@ const LoginPage = () => {
 
         if (error) throw error;
 
-          // Get user profile from users table with better error handling
         const { data: profile, error: profileError } = await supabase
           .from('users')
           .select('*')
@@ -37,83 +36,70 @@ const LoginPage = () => {
           .single();
 
         if (profileError) throw profileError;
-
-        if (!profile) {
-          throw new Error('User profile not found');
-        }
+        if (!profile) throw new Error('User profile not found');
 
         console.log('Login successful, user profile:', profile);
 
-        // Store user data in localStorage
         localStorage.setItem('token', data.session.access_token);
         localStorage.setItem('user', JSON.stringify(profile));
         localStorage.setItem('user_id', profile.id);
         localStorage.setItem('is_admin', profile.is_admin);
 
-        // Check if user is admin and redirect accordingly
         if (profile.is_admin) {
           console.log('Admin user detected, redirecting to admin dashboard');
-          navigate('/admin/admindashboard', { replace: true }); // Changed from /admin/dashboard
+          navigate('/admin', { replace: true }); // Updated to match /admin route
         } else {
           console.log('Regular user detected, redirecting to user dashboard');
           navigate('/dashboard', { replace: true });
         }
       } else {
-        try {
-          // Handle signup
-          const { data, error } = await supabase.auth.signUp({
-            email: formData.email,
-            password: formData.password,
-            options: {
-              data: {
-                name: formData.name,
-              }
+        // Handle signup
+        const { data, error } = await supabase.auth.signUp({
+          email: formData.email,
+          password: formData.password,
+          options: {
+            data: { name: formData.name },
+          },
+        });
+
+        if (error) throw error;
+
+        const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert([
+            {
+              id: data.user.id,
+              email: formData.email,
+              name: formData.name,
+              points: 0,
+              money: 0,
+              is_admin: isAdmin,
             },
-          });
+          ]);
 
-          if (error) throw error;
+        if (profileError) throw profileError;
 
-          // Check if this is an admin email domain
-          const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+        const { data: checkData } = await supabase
+          .from('users')
+          .select()
+          .eq('email', formData.email)
+          .single();
 
-          // Create user profile with better error handling
-          const { error: profileError } = await supabase
-            .from('users')
-            .insert([
-              {
-                id: data.user.id,
-                email: formData.email,
-                name: formData.name,
-                points: 0,
-                money: 0,
-                is_admin: isAdmin, // Set admin status based on email
-              },
-            ]);
-
-          // Check if data exists and redirect accordingly
-          const { data: checkData } = await supabase
-            .from('users')
-            .select()
-            .eq('email', formData.email)
-            .single();
-
-          if (checkData) {
-            localStorage.setItem('token', data.session?.access_token);
-            localStorage.setItem('user', JSON.stringify(checkData));
-            
-            if (isAdmin) {
-              console.log('Admin account created, redirecting to admin dashboard');
-              navigate('/admin/dashboard');
-            } else {
-              console.log('User account created, redirecting to dashboard');
-              navigate('/dashboard');
-            }
-          } else if (profileError) {
-            throw profileError;
+        if (checkData) {
+          if (data.session) {
+            localStorage.setItem('token', data.session.access_token);
           }
-        } catch (error) {
-          console.error('Authentication error:', error);
-          setError(error.message || 'Authentication failed');
+          localStorage.setItem('user', JSON.stringify(checkData));
+
+          if (isAdmin) {
+            console.log('Admin account created, redirecting to admin dashboard');
+            navigate('/admin', { replace: true }); // Updated to match /admin route
+          } else {
+            console.log('User account created, redirecting to dashboard');
+            navigate('/dashboard', { replace: true });
+          }
         }
       }
     } catch (error) {
@@ -191,11 +177,13 @@ const LoginPage = () => {
           </form>
 
           <div className="toggle-auth">
-            <button onClick={() => {
-              setIsLogin(!isLogin);
-              setError('');
-              setFormData({ email: '', password: '', name: '' });
-            }}>
+            <button
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setError('');
+                setFormData({ email: '', password: '', name: '' });
+              }}
+            >
               {isLogin ? 'New to EcoPoints? Create an account' : 'Already have an account? Sign in'}
             </button>
           </div>
