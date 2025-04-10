@@ -9,7 +9,7 @@ import '../styles/Redemption.css';
 const Redemption = () => {
   const navigate = useNavigate();
   const [userPoints, setUserPoints] = useState(0);
-   const [redeemAmount, setRedeemAmount] = useState('');
+  const [redeemAmount, setRedeemAmount] = useState('');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,11 +30,9 @@ const Redemption = () => {
           return;
         }
 
-        // Store essential user data
         localStorage.setItem('user_id', session.user.id);
         localStorage.setItem('user_name', session.user.user_metadata?.name || session.user.email);
 
-        // Fetch user data after confirming authentication
         await Promise.all([
           fetchUserData(),
           fetchPendingRedemptions()
@@ -125,10 +123,8 @@ const Redemption = () => {
         return;
       }
 
-      // Calculate points needed for redemption
       const pointsNeeded = calculatePointsNeeded(amount);
 
-      // Get current user data
       const { data: currentUser, error: userError } = await supabase
         .from('users')
         .select('points')
@@ -137,17 +133,14 @@ const Redemption = () => {
 
       if (userError) throw userError;
 
-      // Validate points
       if (pointsNeeded > currentUser.points) {
         setMessage(`Insufficient points. You need ${pointsNeeded} points to redeem ₱${amount}`);
         setMessageType('error');
         return;
       }
 
-      // Calculate new points balance
       const newPoints = currentUser.points - pointsNeeded;
 
-      // Update user's points
       const { error: updateError } = await supabase
         .from('users')
         .update({ 
@@ -157,13 +150,12 @@ const Redemption = () => {
 
       if (updateError) throw updateError;
 
-      // Create redemption request
       const { data: redemption, error: redemptionError } = await supabase
         .from('redemption_requests')
         .insert({
           user_id: session.user.id,
           amount: amount,
-          points: pointsNeeded,
+          points: pointsNeeded, // Now matches the schema
           status: 'pending',
           created_at: new Date().toISOString()
         })
@@ -172,7 +164,6 @@ const Redemption = () => {
 
       if (redemptionError) throw redemptionError;
 
-      // Create admin notification
       await supabase
         .from('admin_notifications')
         .insert({
@@ -189,17 +180,16 @@ const Redemption = () => {
       setMessageType('success');
       setRedeemAmount('');
       
-      // Refresh user data and pending redemptions
       await Promise.all([
         fetchUserData(),
         fetchPendingRedemptions()
       ]);
 
     } catch (error) {
-      console.error('Redemption Error:', error);
+      console.error('Redemption Error:', error); // Line 199
       setMessage(error.message || 'Failed to submit redemption request');
       setMessageType('error');
-      await fetchUserData(); // Refresh data on error
+      await fetchUserData();
     } finally {
       setLoading(false);
     }
