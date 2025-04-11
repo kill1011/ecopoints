@@ -1,11 +1,16 @@
+// src/pages/Insert.js
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
+import { supabase } from '../supabaseClient';
 import '../styles/Insert.css';
 
 const Insert = () => {
-  const wsRef = useRef(null);
+  // Serial connection to ESP32
+  const serialRef = useRef(null);
+  const readerRef = useRef(null);
+  const portRef = useRef(null);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   
   const [userData, setUserData] = useState({ 
@@ -14,7 +19,7 @@ const Insert = () => {
   });
 
   const [alert, setAlert] = useState({ type: '', message: '' });
-  const [systemStatus, setSystemStatus] = useState('-');
+  const [systemStatus, setSystemStatus] = useState('Idle');
   const [material, setMaterial] = useState('Unknown');
   const [quantity, setQuantity] = useState(0);
   const [bottleCount, setBottleCount] = useState(0);
@@ -23,60 +28,199 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
+  const [timeLeft, setTimeLeft] = useState(30);
+  const [timerInterval, setTimerInterval] = useState(null);
 
-  const startSensing = () => {
-    if (isSensing) return;
-    setIsSensing(true);
-    setSystemStatus('Scanning...');
-    let timeLeft = 30; // 30-second scan cycle
-    const interval = setInterval(() => {
-      if (!isSensing) {
-        clearInterval(interval);
-        return;
+  // Handle incoming messages from ESP32
+  const processSerialMessage = (message) => {
+    console.log('Received from ESP32:', message);
+    
+    if (message.startsWith('SESSION_STARTED')) {
+      setAlert({ type: 'info', message: 'Sensing session started successfully!' });
+    } 
+    else if (message.startsWith('SESSION_ENDED')) {
+      setAlert({ type: 'info', message: 'Sensing session ended.' });
+      stopSensing();
+    }
+    else if (message.startsWith('DETECTED:')) {
+      const detectedItem = message.split(':')[1];
+      setMaterial(detectedItem);
+      
+      if (detectedItem === 'bottle') {
+        setBottleCount(prev => prev + 1);
+      } else if (detectedItem === 'can') {
+        setCanCount(prev => prev + 1);
       }
-      setTimer(`Time Left: ${timeLeft}s`);
-      timeLeft--;
-      if (timeLeft < 0) stopSensing();
-    }, 1000);
+      
+      // Update total detected items
+      setQuantity(prev => prev + 1);
+      
+      // Update earnings preview in real-time
+      updateEarnings(
+        detectedItem === 'bottle' ? bottleCount + 1 : bottleCount,
+        detectedItem === 'can' ? canCount + 1 : canCount
+      );
+    }
   };
 
-  const stopSensing = () => {
+  // Connect to the ESP32 through Serial Web API
+  const connectToDevice = async () => {
+    if ('serial' in navigator) {
+      try {
+        portRef.current = await navigator.serial.requestPort();
+        await portRef.current.open({ baudRate: 115200 });
+        
+        const decoder = new TextDecoderStream();
+        readerRef.current = portRef.current.readable.pipeThrough(decoder).getReader();
+        
+        // Read serial data loop
+        const readLoop = async () => {
+          try {
+            while (true) {
+              const { value, done } = await readerRef.current.read();
+              if (done) break;
+              
+              // Process each line
+              value.split('\n').forEach(line => {
+                if (line.trim()) {
+                  processSerialMessage(line.trim());
+                }
+              });
+            }
+          } catch (error) {
+            console.error('Error reading from serial port:', error);
+            setAlert({ type: 'error', message: 'Error reading from ESP32 device' });
+          }
+        };
+        
+        readLoop();
+        return true;
+      } catch (error) {
+        console.error('Failed to connect to ESP32:', error);
+        setAlert({ type: 'error', message: 'Could not connect to ESP32 device' });
+        return false;
+      }
+    } else {
+      setAlert({ type: 'error', message: 'Web Serial API is not supported in this browser' });
+      return false;
+    }
+  };
+
+  // Send command to ESP32
+  const sendToESP32 = async (command) => {
+    if (!portRef.current) {
+      const connected = await connectToDevice();
+      if (!connected) return false;
+    }
+    
+    try {
+      const encoder = new TextEncoder();
+      const writer = portRef.current.writable.getWriter();
+      await writer.write(encoder.encode(command + '\n'));
+      writer.releaseLock();
+      return true;
+    } catch (error) {
+      console.error('Error writing to serial port:', error);
+      setAlert({ type: 'error', message: 'Error sending command to ESP32' });
+      return false;
+    }
+  };
+
+  const startSensing = async () => {
+    if (isSensing) return;
+    
+    // Connect and send start command to ESP32
+    const success = await sendToESP32('START');
+    if (!success) return;
+    
+    setIsSensing(true);
+    setSystemStatus('Scanning...');
+    resetSensorData();
+    
+    // Start timer countdown
+    setTimeLeft(30);
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          stopSensing();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    setTimerInterval(interval);
+  };
+
+  const stopSensing = async () => {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      setTimerInterval(null);
+    }
+    
     setIsSensing(false);
     setSystemStatus('Idle');
     setTimer('');
+    
+    // Let ESP32 know we're stopping
+    await sendToESP32('STOP');
   };
 
-  const updateEarnings = () => {
-    const points = bottleCount * 2 + canCount * 3;
-    const money = (bottleCount * 0.5 + canCount * 0.75).toFixed(2);
+  const updateEarnings = (bottles = bottleCount, cans = canCount) => {
+    const points = bottles * 2 + cans * 3;
+    const money = (bottles * 0.5 + cans * 0.75).toFixed(2);
     setPointsEarned(points);
     setMoneyEarned(money);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const payload = { bottle_quantity: bottleCount, can_quantity: canCount };
-    try {
-      const response = await fetch('/api/insert-recyclables', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const result = await response.json();
-      if (result.success) {
-        setAlert({ type: 'success', message: 'Recyclables added successfully!' });
-        resetSensorData();
-        const userId = localStorage.getItem('user_id');
-        const userResponse = await fetch(`/api/user/${userId}`);
-        setUserData(await userResponse.json());
-      } else {
-        setAlert({ type: 'error', message: result.message || 'Failed to add recyclables.' });
-      }
-    } catch (error) {
-      setAlert({ type: 'error', message: 'An error occurred.' });
-      console.error(error);
+    
+    if (!user.id) {
+      setAlert({ type: 'error', message: 'You must be logged in to save recyclables' });
+      return;
     }
-    stopSensing();
+    
+    // First stop the sensing session
+    await stopSensing();
+    
+    // Save to Supabase directly
+    try {
+      const { data, error } = await supabase
+        .from('recycling_sessions')
+        .insert([
+          { 
+            user_id: user.id,
+            bottle_count: bottleCount,
+            can_count: canCount,
+            points_earned: pointsEarned,
+            money_value: parseFloat(moneyEarned)
+          }
+        ]);
+      
+      if (error) throw error;
+      
+      // Update user points in Supabase
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .update({ points: user.points + pointsEarned })
+        .eq('id', user.id)
+        .select();
+      
+      if (userError) throw userError;
+      
+      // Update local storage with new points
+      const updatedUser = { ...user, points: user.points + pointsEarned };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      
+      setAlert({ type: 'success', message: 'Recyclables added successfully!' });
+      resetSensorData();
+      
+    } catch (error) {
+      console.error('Error saving recyclables:', error);
+      setAlert({ type: 'error', message: 'Failed to save recyclables: ' + error.message });
+    }
   };
 
   const resetSensorData = () => {
@@ -88,49 +232,63 @@ const Insert = () => {
     setMoneyEarned(0);
   };
 
+  // Display timer while sensing
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    const token = localStorage.getItem('token');
-    const userId = localStorage.getItem('user_id');
-
-    if (!userId || !token) {
-      window.location.href = '/login';
-      return;
+    if (isSensing) {
+      setTimer(`Time Left: ${timeLeft}s`);
     }
+  }, [timeLeft, isSensing]);
 
+  // Fetch user data on component mount
+  useEffect(() => {
     const fetchUserData = async () => {
-      try {
-        const response = await fetch(`http://localhost:5000/api/user-stats/${userId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch user data');
-        }
-
-        const data = await response.json();
-        setUserData(data);
-      } catch (error) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      
+      if (error) {
         console.error('Error fetching user data:', error);
-        setAlert({
-          type: 'error',
-          message: 'Failed to load user data'
-        });
+        setAlert({ type: 'error', message: 'Failed to load user data' });
+      } else if (data) {
+        setUserData(data);
       }
     };
 
-    fetchUserData();
+    if (user.id) {
+      fetchUserData();
+    }
 
+    // Clean up serial connection when component unmounts
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      if (readerRef.current) {
+        readerRef.current.cancel();
+      }
+      if (portRef.current?.readable?.locked) {
+        readerRef.current.releaseLock();
+      }
+      if (portRef.current?.writable?.locked) {
+        portRef.current.writable.getWriter().releaseLock();
+      }
+      if (portRef.current && portRef.current.close) {
+        portRef.current.close();
+      }
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
     };
   }, []);
 
   return (
     <Layout title="Insert Recyclables">
+      {alert.message && (
+        <div className={`alert ${alert.type}`}>
+          {alert.message}
+          <button onClick={() => setAlert({ type: '', message: '' })}>×</button>
+        </div>
+      )}
+      
       <div className="insert-grid">
         <div className="status-card">
           <div className="stat-label"><FontAwesomeIcon icon={faRecycle} /> Sensor Status</div>
@@ -138,6 +296,11 @@ const Insert = () => {
           <div className="stat-label">Material: {material}</div>
           <div className="stat-value">{quantity}</div>
           <div className="stat-label">Items Detected</div>
+          
+          <div className="detection-counts">
+            <div>Bottles: {bottleCount}</div>
+            <div>Cans: {canCount}</div>
+          </div>
         </div>
 
         <div className="control-card">
@@ -160,7 +323,11 @@ const Insert = () => {
                 <FontAwesomeIcon icon={faStop} /> Cancel
               </button>
             </div>
-            <button type="submit" className="control-btn submit-btn" disabled={!isSensing}>
+            <button 
+              type="submit" 
+              className="control-btn submit-btn" 
+              disabled={!bottleCount && !canCount}
+            >
               Add Recyclables
             </button>
             <div className="timer-display">{timer}</div>

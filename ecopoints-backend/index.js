@@ -5,26 +5,27 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { supabase } from './config/supabase.js';
 
+// Initialize environment variables
 dotenv.config();
-const express = require('express');
-const cors = require('cors');
+
+// Create Express application
 const app = express();
 
 // CORS configuration
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://ecopoints-teal.vercel.app' // Update with your actual frontend URL if deployed
+    'https://ecopoints-teal.vercel.app'
   ],
-
-  
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
 
+// Middleware to parse JSON request bodies
 app.use(express.json());
 
+// API Routes
 // Hello endpoint
 app.get('/api/hello', (req, res) => {
   res.json({ message: "Hello from the backend!" });
@@ -50,6 +51,7 @@ app.get('/api/health', (req, res) => {
   }
 });
 
+// Authentication Routes
 // Login endpoint
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
@@ -96,6 +98,7 @@ app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
 
   try {
+    // Check if user already exists
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -106,9 +109,11 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
+    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Create user in Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -117,6 +122,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
     if (authError) throw authError;
 
+    // Create user profile in database
     const { error: profileError } = await supabase
       .from('users')
       .insert([{
@@ -157,7 +163,7 @@ app.use((err, req, res, next) => {
 // Export the app for Vercel
 export default app;
 
-// Optional: Local development server
+// Start server for local development
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
