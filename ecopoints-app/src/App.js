@@ -17,19 +17,20 @@ import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
 
-const API_URL = process.env.REACT_APP_API_URL;
+const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app';
 
 function App() {
   const [data, setData] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [supabaseStatus, setSupabaseStatus] = useState('Checking...');
 
-  useEffect(() => {
-    const checkBackendConnection = async () => {
+  const checkBackendConnection = async (retries = 3, delay = 1000) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         if (!API_URL) {
-          throw new Error('REACT_APP_API_URL is not defined in environment variables');
+          throw new Error('REACT_APP_API_URL is not defined');
         }
-        console.log('Attempting to connect to backend:', API_URL);
+        console.log(`Attempt ${attempt}: Connecting to backend: ${API_URL}/api/hello`);
 
         const response = await fetch(`${API_URL}/api/hello`, {
           method: 'GET',
@@ -53,25 +54,39 @@ function App() {
 
         setData(result.message);
         setIsConnected(true);
+        return;
       } catch (error) {
-        console.error('Backend connection error:', error.message); // Line 44
-        setIsConnected(false);
-        setData(`Connection failed: ${error.message}`); // Show error in UI
+        console.error(`Attempt ${attempt} failed:`, error.message);
+        if (attempt < retries) {
+          console.log(`Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          console.error('Backend connection error:', error.message);
+          setIsConnected(false);
+          setData(`Connection failed: ${error.message}`);
+        }
       }
-    };
+    }
+  };
 
-    const testSupabaseConnection = async () => {
-      try {
-        const { data: supabaseData, error } = await supabase
-          .from('users')
-          .select('count', { count: 'exact' });
-        if (error) throw error;
-        console.log('Supabase connection successful:', supabaseData);
-      } catch (error) {
-        console.error('Supabase connection error:', error.message);
+  const testSupabaseConnection = async () => {
+    try {
+      const { data: supabaseData, error } = await supabase
+        .from('users')
+        .select('count', { count: 'exact' });
+      if (error) {
+        console.error('Supabase error:', error.message, error.details);
+        throw error;
       }
-    };
+      console.log('Supabase connection successful:', supabaseData);
+      setSupabaseStatus('Connected');
+    } catch (error) {
+      console.error('Supabase connection error:', error.message);
+      setSupabaseStatus(`Failed: ${error.message}`);
+    }
+  };
 
+  useEffect(() => {
     checkBackendConnection();
     testSupabaseConnection();
   }, []);
@@ -95,6 +110,7 @@ function App() {
           </Routes>
           <div className="connection-status">
             Backend Status: {isConnected ? 'Connected' : 'Not connected'} <br />
+            Supabase Status: {supabaseStatus} <br />
             {data && `Message: ${data}`}
           </div>
         </div>

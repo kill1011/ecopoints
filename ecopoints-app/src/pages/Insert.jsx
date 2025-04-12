@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
-import { supabase } from '../supabaseClient';
+import { supabase } from '../supabaseClient'; // Adjust path if needed
 import '../styles/Insert.css';
 
 const Insert = () => {
@@ -204,32 +204,41 @@ const Insert = () => {
   }, [timeLeft, isSensing]);
 
   useEffect(() => {
-    const fetchUserData = async () => {
+    const fetchUserData = async (retries = 3, delay = 1000) => {
       if (!user.id) {
         console.warn('No user ID in localStorage, skipping fetch');
         setAlert({ type: 'warning', message: 'Please log in to view user data' });
         return;
       }
-      try {
-        console.log('Fetching user data for ID:', user.id);
-        const { data, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        if (error) {
-          console.error('Supabase fetch error:', error.message, error.details, error.hint);
-          throw new Error(`Failed to fetch user data: ${error.message}`);
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          console.log(`Attempt ${attempt}: Fetching user data for ID: ${user.id}`);
+          const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+          if (error) {
+            console.error('Supabase fetch error:', error.message, error.details, error.hint);
+            throw new Error(`Failed to fetch user data: ${error.message}`);
+          }
+          if (!data) {
+            console.warn('No user found for ID:', user.id);
+            throw new Error('User not found');
+          }
+          console.log('User data fetched:', data);
+          setUserData(data);
+          return;
+        } catch (error) {
+          console.error(`Attempt ${attempt} failed:`, error.message);
+          if (attempt < retries) {
+            console.log(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          } else {
+            console.error('Fetch user error:', error.message);
+            setAlert({ type: 'error', message: `Failed to load user data: ${error.message}` });
+          }
         }
-        if (!data) {
-          console.warn('No user found for ID:', user.id);
-          throw new Error('User not found');
-        }
-        console.log('User data fetched:', data);
-        setUserData(data);
-      } catch (error) {
-        console.error('Fetch user error:', error.message);
-        setAlert({ type: 'error', message: error.message });
       }
     };
     fetchUserData();
