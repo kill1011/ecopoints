@@ -2,11 +2,9 @@ import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
-import Pusher from 'pusher-js';
 import '../styles/Insert.css';
 
-const PUSHER_KEY = '528b7d374844d8b54864'; // Your apiKey
-const PUSHER_CLUSTER = 'ap1'; // Your cluster
+const WS_URL = 'ws://192.168.254.110'; // Replace with your ESP32-CAM's IP address
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -24,49 +22,59 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
+  const [ws, setWs] = useState(null);
 
   useEffect(() => {
-    const pusher = new Pusher(PUSHER_KEY, {
-      cluster: PUSHER_CLUSTER,
-      forceTLS: true
-    });
+    const websocket = new WebSocket(WS_URL);
 
-    const channel = pusher.subscribe('ecopoints');
-
-    channel.bind('detection', (data) => {
-      console.log('Pusher detection:', data);
-      const { material: detectedMaterial, quantity: detectedQuantity, device_id } = data;
-      if (device_id === 'esp32-cam-1') {
-        setMaterial(detectedMaterial);
-        setQuantity(prev => prev + detectedQuantity);
-        if (detectedMaterial === 'bottle') {
-          setBottleCount(prev => prev + detectedQuantity);
-        } else if (detectedMaterial === 'can') {
-          setCanCount(prev => prev + detectedQuantity);
-        }
-        updateEarnings();
-      }
-    });
-
-    channel.bind('pusher:subscription_succeeded', () => {
+    websocket.onopen = () => {
+      console.log('Connected to ESP32-CAM WebSocket');
       setAlert({ type: 'info', message: 'Connected to sensor' });
-    });
-    channel.bind('pusher:subscription_error', (error) => {
-      console.error('Pusher subscription error:', error);
+    };
+
+    websocket.onmessage = (event) => {
+      console.log('WebSocket message:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'detection' && data.device_id === 'esp32-cam-1') {
+          const { material: detectedMaterial, quantity: detectedQuantity } = data;
+          setMaterial(detectedMaterial);
+          setQuantity(prev => prev + detectedQuantity);
+          if (detectedMaterial === 'bottle') {
+            setBottleCount(prev => prev + detectedQuantity);
+          } else if (detectedMaterial === 'can') {
+            setCanCount(prev => prev + detectedQuantity);
+          }
+          updateEarnings();
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+
+    websocket.onerror = (error) => {
+      console.error('WebSocket error:', error);
       setAlert({ type: 'error', message: 'Sensor connection failed' });
-    });
+    };
+
+    websocket.onclose = () => {
+      console.log('WebSocket disconnected');
+      setAlert({ type: 'warning', message: 'Disconnected from sensor' });
+    };
+
+    setWs(websocket);
 
     return () => {
-      channel.unbind_all();
-      pusher.disconnect();
+      websocket.close();
       stopSensing();
     };
   }, []);
 
-  const startSensing = async () => {
-    if (isSensing) return;
+  const startSensing = () => {
+    if (isSensing || !ws) return;
     setIsSensing(true);
     setSystemStatus('Scanning...');
+    ws.send(JSON.stringify({ command: 'start' }));
     let timeLeft = 30;
     const interval = setInterval(() => {
       if (!isSensing) {
@@ -80,9 +88,11 @@ const Insert = () => {
   };
 
   const stopSensing = () => {
+    if (!ws) return;
     setIsSensing(false);
     setSystemStatus('Idle');
     setTimer('');
+    ws.send(JSON.stringify({ command: 'stop' }));
   };
 
   const updateEarnings = () => {
@@ -146,7 +156,7 @@ const Insert = () => {
                 type="button"
                 className="control-btn start-btn"
                 onClick={startSensing}
-                disabled={isSensing}
+                disabled={isSensing || !ws}
               >
                 <FontAwesomeIcon icon={faPlay} /> Start Sensing
               </button>
