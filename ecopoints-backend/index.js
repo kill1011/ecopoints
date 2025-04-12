@@ -9,8 +9,10 @@ import { createClient } from '@supabase/supabase-js';
 dotenv.config();
 
 // Validate environment variables
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY || !process.env.JWT_SECRET) {
-  console.error('Missing environment variables: SUPABASE_URL, SUPABASE_KEY, or JWT_SECRET');
+const requiredEnv = ['SUPABASE_URL', 'SUPABASE_KEY', 'JWT_SECRET'];
+const missingEnv = requiredEnv.filter(key => !process.env[key]);
+if (missingEnv.length) {
+  console.error(`Missing environment variables: ${missingEnv.join(', ')}`);
   process.exit(1);
 }
 
@@ -25,10 +27,10 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'https://ecopoints-teal.vercel.app',
-    'http://192.168.0.0/16', // Allow ESP32-CAM local IPs
+    'http://192.168.0.0/16', // ESP32-CAM local IPs
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
 }));
 
@@ -37,21 +39,22 @@ app.use(express.json());
 
 // API Routes
 app.get('/api/hello', (req, res) => {
+  console.log('GET /api/hello');
   res.json({ message: 'Hello from the backend!' });
 });
 
 app.get('/', (req, res) => {
+  console.log('GET /');
   res.json({ message: 'EcoPoints API is running' });
 });
 
 app.get('/api/health', async (req, res) => {
-  console.log('Health check received from:', req.headers.origin);
+  console.log('GET /api/health from:', req.headers.origin);
   try {
-    // Test Supabase connection
     const { data, error } = await supabase.from('device_control').select('device_id').limit(1);
     if (error) {
-      console.error('Supabase health check failed:', error.message);
-      return res.status(500).json({ status: 'error', message: 'Supabase connection issue' });
+      console.error('Supabase health check failed:', error.message, error.details);
+      return res.status(500).json({ status: 'error', message: 'Supabase connection issue', error: error.message });
     }
     res.json({
       status: 'ok',
@@ -60,14 +63,30 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Health check error:', error.message);
-    res.status(500).json({ status: 'error', message: 'Health check failed' });
+    console.error('Health check error:', error.message, error.stack);
+    res.status(500).json({ status: 'error', message: 'Health check failed', error: error.message });
   }
+});
+
+app.get('/api/debug', (req, res) => {
+  console.log('GET /api/debug');
+  res.json({
+    message: 'Debug endpoint',
+    env: {
+      SUPABASE_URL: !!process.env.SUPABASE_URL,
+      SUPABASE_KEY: !!process.env.SUPABASE_KEY,
+      JWT_SECRET: !!process.env.JWT_SECRET,
+    },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get('/api/control', async (req, res) => {
   try {
-    console.log('GET /api/control called for device_id: esp32-cam-1');
+    console.log('GET /api/control for device_id: esp32-cam-1');
+    // Temporary static response to bypass Supabase issues
+    // Uncomment Supabase code once verified
+    /*
     const { data, error } = await supabase
       .from('device_control')
       .select('command')
@@ -76,29 +95,28 @@ app.get('/api/control', async (req, res) => {
 
     if (error) {
       console.error('Supabase query error:', error.message, error.details, error.hint);
-      // Fallback: return stop if query fails
-      return res.json({ command: 'stop', warning: 'Supabase query failed, using default' });
+      return res.json({ command: 'stop', warning: 'Supabase query failed' });
     }
 
     if (!data) {
-      console.log('No control data found for esp32-cam-1');
-      // Auto-insert default stop
+      console.log('No control data found');
       const { error: insertError } = await supabase
         .from('device_control')
         .insert([{ device_id: 'esp32-cam-1', command: 'stop', updated_at: new Date().toISOString() }]);
-
       if (insertError) {
-        console.error('Failed to insert default stop:', insertError.message, insertError.details);
+        console.error('Insert error:', insertError.message);
         return res.json({ command: 'stop', warning: 'Failed to initialize device_control' });
       }
       return res.json({ command: 'stop' });
     }
 
-    console.log('Control data found:', data);
-    res.json({ command: data.command });
+    console.log('Control data:', data);
+    return res.json({ command: data.command });
+    */
+    // Static response for now
+    res.json({ command: 'stop', note: 'Static response until Supabase is fixed' });
   } catch (error) {
     console.error('Control endpoint error:', error.message, error.stack);
-    // Ultimate fallback
     res.json({ command: 'stop', error: 'Unexpected server error' });
   }
 });
@@ -107,7 +125,7 @@ app.post('/api/control', async (req, res) => {
   const { command, device_id = 'esp32-cam-1' } = req.body;
 
   try {
-    console.log('POST /api/control called with:', { command, device_id });
+    console.log('POST /api/control:', { command, device_id });
     if (!['start', 'stop'].includes(command)) {
       return res.status(400).json({ message: 'Invalid command' });
     }
@@ -134,7 +152,7 @@ app.post('/api/recyclables', async (req, res) => {
   const { material, quantity, device_id, user_id } = req.body;
 
   try {
-    console.log('POST /api/recyclables called with:', req.body);
+    console.log('POST /api/recyclables:', req.body);
     if (!material || !quantity || !device_id) {
       return res.status(400).json({ message: 'Material, quantity, and device_id are required' });
     }
@@ -171,7 +189,7 @@ app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    console.log('POST /api/login called for:', email);
+    console.log('POST /api/login:', email);
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
@@ -214,7 +232,7 @@ app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
 
   try {
-    console.log('POST /api/auth/signup called for:', email);
+    console.log('POST /api/auth/signup:', email);
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -269,7 +287,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
 // Error handling middleware
 app.use((req, res) => {
-  console.log('404 Route not found:', req.method, req.url);
+  console.log('404:', req.method, req.url);
   res.status(404).json({ message: 'Route not found' });
 });
 
