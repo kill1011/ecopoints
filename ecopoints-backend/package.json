@@ -26,5 +26,8 @@
     "pusher": "^5.2.0",
     "pusher-js": "^8.4.0",
     "supabase": "^2.20.12"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }

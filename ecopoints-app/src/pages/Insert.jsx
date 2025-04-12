@@ -78,6 +78,7 @@ const Insert = () => {
     if (isSensing || isLoading) return;
     setIsLoading(true);
     try {
+      console.log('Fetching:', `${API_URL}/api/control`);
       const response = await fetch(`${API_URL}/api/control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,9 +86,15 @@ const Insert = () => {
         mode: 'cors',
       });
 
+      console.log('Start response:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
+
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to start sensing: ${response.status} ${response.statusText} ${errorText}`);
+        const errorText = await response.text().catch(() => 'No body');
+        throw new Error(`Status: ${response.status} ${response.statusText}, Body: ${errorText}`);
       }
 
       setIsSensing(true);
@@ -104,8 +111,12 @@ const Insert = () => {
       }, 1000);
       setAlert({ type: 'success', message: 'Sensor started' });
     } catch (error) {
-      console.error('Start sensing error:', error.message, error);
-      setAlert({ type: 'error', message: `Start sensing failed: ${error.message}` });
+      console.error('Start sensing error:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+      });
+      setAlert({ type: 'error', message: `Failed: ${error.message}` });
       setSystemStatus('Idle');
     } finally {
       setIsLoading(false);
@@ -116,6 +127,7 @@ const Insert = () => {
     if (!isSensing || isLoading) return;
     setIsLoading(true);
     try {
+      console.log('Fetching:', `${API_URL}/api/control`);
       const response = await fetch(`${API_URL}/api/control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -123,9 +135,15 @@ const Insert = () => {
         mode: 'cors',
       });
 
+      console.log('Stop response:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
+
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to stop sensing: ${response.status} ${response.statusText} ${errorText}`);
+        const errorText = await response.text().catch(() => 'No body');
+        throw new Error(`Status: ${response.status} ${response.statusText}, Body: ${errorText}`);
       }
 
       setIsSensing(false);
@@ -133,8 +151,12 @@ const Insert = () => {
       setTimer('');
       setAlert({ type: 'info', message: 'Sensor stopped' });
     } catch (error) {
-      console.error('Stop sensing error:', error.message, error);
-      setAlert({ type: 'error', message: `Stop sensing failed: ${error.message}` });
+      console.error('Stop sensing error:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+      });
+      setAlert({ type: 'error', message: `Failed: ${error.message}` });
     } finally {
       setIsLoading(false);
     }
@@ -161,6 +183,7 @@ const Insert = () => {
         money_earned: parseFloat(moneyEarned),
       };
 
+      console.log('Fetching:', `${API_URL}/api/insert-recyclables`);
       const response = await fetch(`${API_URL}/api/insert-recyclables`, {
         method: 'POST',
         headers: {
@@ -171,15 +194,21 @@ const Insert = () => {
         mode: 'cors',
       });
 
+      console.log('Submit response:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
+
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         if (response.status === 401 || response.status === 403) {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           setUserData({ name: 'Guest', points: 0, id: null });
           throw new Error('Session expired. Please log in again.');
         }
-        throw new Error(errorData.message || `Failed to record recyclables: ${response.status}`);
+        throw new Error(errorData.message || `Status: ${response.status} ${response.statusText}`);
       }
 
       const { data } = await response.json();
@@ -204,8 +233,12 @@ const Insert = () => {
       resetSensorData();
       await stopSensing();
     } catch (error) {
-      console.error('Submit error:', error.message, error);
-      setAlert({ type: 'error', message: error.message });
+      console.error('Submit error:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+      });
+      setAlert({ type: 'error', message: `Failed: ${error.message}` });
     } finally {
       setIsLoading(false);
     }

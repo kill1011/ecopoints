@@ -27,37 +27,42 @@ function App() {
   const checkBackendConnection = async (retries = 3, delay = 1000) => {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        if (!API_URL) throw new Error('REACT_APP_API_URL is not defined');
-        console.log(`Attempt ${attempt}: Connecting to backend: ${API_URL}/api/health`);
-
+        console.log(`Attempt ${attempt}: Connecting to ${API_URL}/api/health`);
         const response = await fetch(`${API_URL}/api/health`, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
           mode: 'cors',
         });
 
-        console.log('Response:', { status: response.status, statusText: response.statusText });
+        console.log('Health response:', {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries()),
+        });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP error! Status: ${response.status} ${response.statusText} ${errorText}`);
+          const errorText = await response.text().catch(() => 'No body');
+          throw new Error(`Status: ${response.status} ${response.statusText}, Body: ${errorText}`);
         }
 
         const result = await response.json();
-        console.log('Backend response:', result);
-
+        console.log('Health data:', result);
         setData(result.status || 'ok');
         setIsConnected(true);
         return;
       } catch (error) {
-        console.error(`Attempt ${attempt} failed:`, error.message, error);
+        console.error(`Attempt ${attempt} failed:`, {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+        });
         if (attempt < retries) {
           console.log(`Retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         } else {
-          console.error('Backend connection error:', error.message);
+          console.error('Backend connection failed:', error.message);
           setIsConnected(false);
-          setData(`Connection failed: ${error.message}`);
+          setData(`Failed: ${error.message}`);
         }
       }
     }
@@ -70,10 +75,10 @@ function App() {
         .select('device_id, command')
         .limit(1);
       if (error) throw error;
-      console.log('Supabase connection successful:', supabaseData);
+      console.log('Supabase connected:', supabaseData);
       setSupabaseStatus('Connected');
     } catch (error) {
-      console.error('Supabase connection error:', error.message);
+      console.error('Supabase error:', error.message);
       setSupabaseStatus(`Failed: ${error.message}`);
     }
   };
