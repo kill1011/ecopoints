@@ -15,11 +15,12 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://ecopoints-teal.vercel.app'
+    'https://ecopoints-teal.vercel.app',
+    'http://192.168.0.0/16', // Allow ESP32-CAM local IPs
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
 }));
 
 // Middleware to parse JSON request bodies
@@ -28,7 +29,7 @@ app.use(express.json());
 // API Routes
 // Hello endpoint
 app.get('/api/hello', (req, res) => {
-  res.json({ message: "Hello from the backend!" });
+  res.json({ message: 'Hello from the backend!' });
 });
 
 // Root endpoint
@@ -40,10 +41,10 @@ app.get('/', (req, res) => {
 app.get('/api/health', (req, res) => {
   console.log('Health check received from:', req.headers.origin);
   try {
-    res.json({ 
+    res.json({
       status: 'ok',
       server: 'running',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     console.error('Health check error:', error);
@@ -51,11 +52,82 @@ app.get('/api/health', (req, res) => {
   }
 });
 
+// Control endpoint for ESP32-CAM (start/stop commands)
+app.get('/api/control', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('device_control')
+      .select('command')
+      .eq('device_id', 'esp32-cam-1') // Adjust device_id as needed
+      .single();
+
+    if (error || !data) {
+      return res.json({ command: 'stop' }); // Default to stop
+    }
+
+    res.json({ command: data.command });
+  } catch (error) {
+    console.error('Control endpoint error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update control command (for frontend/admin to set start/stop)
+app.post('/api/control', async (req, res) => {
+  const { command, device_id = 'esp32-cam-1' } = req.body;
+
+  if (!['start', 'stop'].includes(command)) {
+    return res.status(400).json({ message: 'Invalid command' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('device_control')
+      .upsert([
+        { device_id, command, updated_at: new Date().toISOString() },
+      ]);
+
+    if (error) {
+      console.error('Control update error:', error);
+      return res.status(500).json({ message: 'Failed to update command' });
+    }
+
+    res.json({ message: `Command ${command} set for device ${device_id}` });
+  } catch (error) {
+    console.error('Control post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Recyclables endpoint for ESP32-CAM
+app.post('/api/recyclables', async (req, res) => {
+  const { material, quantity } = req.body;
+
+  try {
+    if (!material || !quantity) {
+      return res.status(400).json({ message: 'Material and quantity required' });
+    }
+
+    const { data, error } = await supabase
+      .from('recyclables')
+      .insert([{ material, quantity, timestamp: new Date().toISOString() }]);
+
+    if (error) {
+      console.error('Recyclables storage error:', error);
+      return res.status(500).json({ message: 'Failed to store recyclable data' });
+    }
+
+    res.status(201).json({ message: 'Recyclable data stored', data });
+  } catch (error) {
+    console.error('Recyclables endpoint error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Authentication Routes
-// Login endpoint
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
-  
+
   try {
     const { data: user, error } = await supabase
       .from('users')
@@ -84,8 +156,8 @@ app.post('/api/login', async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        is_admin: user.is_admin
-      }
+        is_admin: user.is_admin,
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -93,12 +165,10 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Signup endpoint
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
 
   try {
-    // Check if user already exists
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -109,20 +179,17 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user in Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name } }
+      options: { data: { name } },
     });
 
     if (authError) throw authError;
 
-    // Create user profile in database
     const { error: profileError } = await supabase
       .from('users')
       .insert([{
@@ -132,14 +199,14 @@ app.post('/api/auth/signup', async (req, res) => {
         password: hashedPassword,
         points: 0,
         money: 0,
-        is_admin: false
+        is_admin: false,
       }]);
 
     if (profileError) throw profileError;
 
     res.status(201).json({
       message: 'Registration successful!',
-      user: authData.user
+      user: authData.user,
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -154,19 +221,11 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
-  res.status(500).json({ 
+  res.status(500).json({
     message: 'Internal server error',
-    error: err.message
+    error: err.message,
   });
 });
 
-// Export the app for Vercel
+// Export for Vercel
 export default app;
-
-// Start server for local development
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-  });
-}
