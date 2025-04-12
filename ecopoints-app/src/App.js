@@ -27,11 +27,12 @@ function App() {
   const checkBackendConnection = async (retries = 3, delay = 1000) => {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`Attempt ${attempt}: Connecting to ${API_URL}/api/health`);
+        console.log(`Attempt ${attempt}: Fetching GET ${API_URL}/api/health`);
         const response = await fetch(`${API_URL}/api/health`, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
           mode: 'cors',
+          signal: AbortSignal.timeout(5000),
         });
 
         console.log('Health response:', {
@@ -41,8 +42,8 @@ function App() {
         });
 
         if (!response.ok) {
-          const errorText = await response.text().catch(() => 'No body');
-          throw new Error(`Status: ${response.status} ${response.statusText}, Body: ${errorText}`);
+          const errorText = await response.text().catch(() => 'No response body');
+          throw new Error(`HTTP error: ${response.status} ${response.statusText}, Body: ${errorText}`);
         }
 
         const result = await response.json();
@@ -55,6 +56,7 @@ function App() {
           message: error.message,
           name: error.name,
           stack: error.stack,
+          cause: error.cause,
         });
         if (attempt < retries) {
           console.log(`Retrying in ${delay}ms...`);
@@ -62,7 +64,7 @@ function App() {
         } else {
           console.error('Backend connection failed:', error.message);
           setIsConnected(false);
-          setData(`Failed: ${error.message}`);
+          setData(`Failed: ${error.message.includes('fetch') ? 'Backend unreachable' : error.message}`);
         }
       }
     }
