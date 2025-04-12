@@ -37,24 +37,54 @@ app.use(cors({
 // Middleware to parse JSON request bodies
 app.use(express.json());
 
+// JWT middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) {
+    console.log('No token provided for:', req.url);
+    return res.status(401).json({ message: 'Token required' });
+  }
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      console.log('Invalid token for:', req.url, err.message);
+      return res.status(403).json({ message: 'Invalid token' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
 // API Routes
 app.get('/api/hello', (req, res) => {
-  console.log('GET /api/hello');
+  console.log('GET /api/hello from:', req.headers.origin);
   res.json({ message: 'Hello from the backend!' });
 });
 
 app.get('/', (req, res) => {
-  console.log('GET /');
+  console.log('GET / from:', req.headers.origin);
   res.json({ message: 'EcoPoints API is running' });
 });
 
 app.get('/api/health', async (req, res) => {
   console.log('GET /api/health from:', req.headers.origin);
   try {
-    const { data, error } = await supabase.from('device_control').select('device_id').limit(1);
+    const { data, error } = await supabase
+      .from('device_control')
+      .select('device_id')
+      .limit(1);
     if (error) {
-      console.error('Supabase health check failed:', error.message, error.details);
-      return res.status(500).json({ status: 'error', message: 'Supabase connection issue', error: error.message });
+      console.error('Supabase health error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      return res.status(500).json({ 
+        status: 'error', 
+        message: 'Supabase connection issue', 
+        error: error.message 
+      });
     }
     res.json({
       status: 'ok',
@@ -64,12 +94,16 @@ app.get('/api/health', async (req, res) => {
     });
   } catch (error) {
     console.error('Health check error:', error.message, error.stack);
-    res.status(500).json({ status: 'error', message: 'Health check failed', error: error.message });
+    res.status(500).json({ 
+      status: 'error', 
+      message: 'Health check failed', 
+      error: error.message 
+    });
   }
 });
 
 app.get('/api/debug', (req, res) => {
-  console.log('GET /api/debug');
+  console.log('GET /api/debug from:', req.headers.origin);
   res.json({
     message: 'Debug endpoint',
     env: {
@@ -84,9 +118,6 @@ app.get('/api/debug', (req, res) => {
 app.get('/api/control', async (req, res) => {
   try {
     console.log('GET /api/control for device_id: esp32-cam-1');
-    // Temporary static response to bypass Supabase issues
-    // Uncomment Supabase code once verified
-    /*
     const { data, error } = await supabase
       .from('device_control')
       .select('command')
@@ -94,30 +125,49 @@ app.get('/api/control', async (req, res) => {
       .maybeSingle();
 
     if (error) {
-      console.error('Supabase query error:', error.message, error.details, error.hint);
-      return res.json({ command: 'stop', warning: 'Supabase query failed' });
+      console.error('Supabase query error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      return res.status(500).json({ 
+        command: 'stop', 
+        error: `Supabase query failed: ${error.message}` 
+      });
     }
 
     if (!data) {
-      console.log('No control data found');
+      console.log('No control data found, initializing...');
       const { error: insertError } = await supabase
         .from('device_control')
-        .insert([{ device_id: 'esp32-cam-1', command: 'stop', updated_at: new Date().toISOString() }]);
+        .insert([{ 
+          device_id: 'esp32-cam-1', 
+          command: 'stop', 
+          updated_at: new Date().toISOString() 
+        }]);
       if (insertError) {
-        console.error('Insert error:', insertError.message);
-        return res.json({ command: 'stop', warning: 'Failed to initialize device_control' });
+        console.error('Insert error:', {
+          code: insertError.code,
+          message: insertError.message,
+          details: insertError.details
+        });
+        return res.status(500).json({ 
+          command: 'stop', 
+          error: `Failed to initialize device_control: ${insertError.message}` 
+        });
       }
       return res.json({ command: 'stop' });
     }
 
     console.log('Control data:', data);
     return res.json({ command: data.command });
-    */
-    // Static response for now
-    res.json({ command: 'stop', note: 'Static response until Supabase is fixed' });
   } catch (error) {
     console.error('Control endpoint error:', error.message, error.stack);
-    res.json({ command: 'stop', error: 'Unexpected server error' });
+    return res.status(500).json({ 
+      command: 'stop', 
+      error: `Server error: ${error.message}` 
+    });
   }
 });
 
@@ -130,21 +180,35 @@ app.post('/api/control', async (req, res) => {
       return res.status(400).json({ message: 'Invalid command' });
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('device_control')
       .upsert([
         { device_id, command, updated_at: new Date().toISOString() },
-      ]);
+      ])
+      .select();
 
     if (error) {
-      console.error('Control update error:', error.message, error.details);
-      return res.status(500).json({ message: 'Failed to update command', error: error.message });
+      console.error('Control update error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details
+      });
+      return res.status(500).json({ 
+        message: 'Failed to update command', 
+        error: error.message 
+      });
     }
 
-    res.json({ message: `Command ${command} set for device ${device_id}` });
+    res.json({ 
+      message: `Command ${command} set for device ${device_id}`, 
+      data 
+    });
   } catch (error) {
     console.error('Control post error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error in control post' });
+    res.status(500).json({ 
+      message: 'Server error in control post', 
+      error: error.message 
+    });
   }
 });
 
@@ -174,20 +238,116 @@ app.post('/api/recyclables', async (req, res) => {
       .select();
 
     if (error) {
-      console.error('Recyclables insert error:', error.message, error.details);
-      return res.status(500).json({ message: 'Failed to store recyclable data', error: error.message });
+      console.error('Recyclables insert error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details
+      });
+      return res.status(500).json({ 
+        message: 'Failed to store recyclable data', 
+        error: error.message 
+      });
     }
 
     res.status(201).json({ message: 'Recyclable data stored', data });
   } catch (error) {
     console.error('Recyclables endpoint error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error in recyclables endpoint' });
+    res.status(500).json({ 
+      message: 'Server error in recyclables endpoint', 
+      error: error.message 
+    });
+  }
+});
+
+app.get('/api/user-stats/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    console.log(`GET /api/user-stats/${id} from:`, req.headers.origin);
+    if (req.user.id !== id && !req.user.is_admin) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, name, email, points, is_admin')
+      .eq('id', id)
+      .single();
+    if (error || !data) {
+      console.error('User stats error:', error?.message);
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(data);
+  } catch (error) {
+    console.error('User stats error:', error.message, error.stack);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+app.post('/api/insert-recyclables', authenticateToken, async (req, res) => {
+  const { user_id, bottle_quantity, can_quantity, points_earned, money_earned } = req.body;
+  try {
+    console.log('POST /api/insert-recyclables:', req.body);
+    if (!user_id || bottle_quantity == null || can_quantity == null) {
+      return res.status(400).json({ success: false, message: 'Invalid payload' });
+    }
+    if (req.user.id !== user_id && !req.user.is_admin) {
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+    const { data, error } = await supabase
+      .from('recycling_sessions')
+      .insert([{
+        user_id,
+        bottle_count: bottle_quantity,
+        can_count: can_quantity,
+        points_earned,
+        money_value: money_earned,
+        created_at: new Date().toISOString()
+      }])
+      .select();
+    if (error) {
+      console.error('Insert recyclables error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details
+      });
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to save session', 
+        error: error.message 
+      });
+    }
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ points: supabase.raw('points + ?', [points_earned]) })
+      .eq('id', user_id);
+    if (updateError) {
+      console.error('Update user error:', {
+        code: updateError.code,
+        message: updateError.message,
+        details: updateError.details
+      });
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to update user points', 
+        error: updateError.message 
+      });
+    }
+    res.status(201).json({ 
+      success: true, 
+      message: 'Recyclables added', 
+      data 
+    });
+  } catch (error) {
+    console.error('Insert recyclables error:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
+    });
   }
 });
 
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
-
   try {
     console.log('POST /api/login:', email);
     const { data: user, error } = await supabase
@@ -224,13 +384,15 @@ app.post('/api/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error during login' });
+    res.status(500).json({ 
+      message: 'Server error during login', 
+      error: error.message 
+    });
   }
 });
 
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
-
   try {
     console.log('POST /api/auth/signup:', email);
     const { data: existingUser } = await supabase
@@ -247,52 +409,63 @@ app.post('/api/auth/signup', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { name } },
-    });
-
-    if (authError) {
-      console.error('Auth signup error:', authError.message);
-      throw authError;
-    }
-
-    const { error: profileError } = await supabase
+    const { data: newUser, error: insertError } = await supabase
       .from('users')
       .insert([{
-        id: authData.user.id,
+        id: supabase.raw('gen_random_uuid()'),
         email,
         name,
         password: hashedPassword,
         points: 0,
         money: 0,
         is_admin: false,
-      }]);
+      }])
+      .select()
+      .single();
 
-    if (profileError) {
-      console.error('Profile insert error:', profileError.message);
-      throw profileError;
+    if (insertError) {
+      console.error('Profile insert error:', {
+        code: insertError.code,
+        message: insertError.message,
+        details: insertError.details
+      });
+      return res.status(500).json({ 
+        message: 'Registration failed', 
+        error: insertError.message 
+      });
     }
 
     res.status(201).json({
       message: 'Registration successful!',
-      user: authData.user,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        name: newUser.name
+      },
     });
   } catch (error) {
     console.error('Registration error:', error.message, error.stack);
-    res.status(500).json({ message: 'Registration failed', error: error.message });
+    res.status(500).json({ 
+      message: 'Server error during signup', 
+      error: error.message 
+    });
   }
 });
 
 // Error handling middleware
 app.use((req, res) => {
-  console.log('404:', req.method, req.url);
+  console.log('404:', req.method, req.url, 'from:', req.headers.origin);
   res.status(404).json({ message: 'Route not found' });
 });
 
 app.use((err, req, res, next) => {
-  console.error('Global error:', err.message, err.stack);
+  console.error('Global error:', {
+    message: err.message,
+    stack: err.stack,
+    method: req.method,
+    url: req.url,
+    origin: req.headers.origin
+  });
   res.status(500).json({
     message: 'A server error has occurred',
     error: err.message,
