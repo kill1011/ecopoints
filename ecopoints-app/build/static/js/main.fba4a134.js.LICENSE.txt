@@ -4,6 +4,14 @@
  * Copyright 2024 Fonticons, Inc.
  */
 
+/*!
+ * Pusher JavaScript Library v8.4.0
+ * https://pusher.com/
+ *
+ * Copyright 2020, Pusher
+ * Released under the MIT licence.
+ */
+
 /**
  * @license React
  * react-dom.production.min.js

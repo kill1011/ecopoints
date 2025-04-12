@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -30,9 +30,9 @@ function App() {
         if (!API_URL) {
           throw new Error('REACT_APP_API_URL is not defined');
         }
-        console.log(`Attempt ${attempt}: Connecting to backend: ${API_URL}/api/hello`);
+        console.log(`Attempt ${attempt}: Connecting to backend: ${API_URL}/api/health`);
 
-        const response = await fetch(`${API_URL}/api/hello`, {
+        const response = await fetch(`${API_URL}/api/health`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -48,15 +48,15 @@ function App() {
         const result = await response.json();
         console.log('Backend response:', result);
 
-        if (!result.message) {
-          throw new Error('Response missing "message" field');
+        if (!result.status) {
+          throw new Error('Response missing "status" field');
         }
 
-        setData(result.message);
+        setData(result.status);
         setIsConnected(true);
         return;
       } catch (error) {
-        console.error(`Attempt ${attempt} failed:`, error.message);
+        console.error(`Attempt ${attempt} failed: ${error.message}`);
         if (attempt < retries) {
           console.log(`Retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -72,8 +72,9 @@ function App() {
   const testSupabaseConnection = async () => {
     try {
       const { data: supabaseData, error } = await supabase
-        .from('users')
-        .select('count', { count: 'exact' });
+        .from('device_control') // Changed to relevant table
+        .select('device_id, command')
+        .limit(1);
       if (error) {
         console.error('Supabase error:', error.message, error.details);
         throw error;
@@ -93,29 +94,31 @@ function App() {
 
   return (
     <AuthProvider>
-      <div className="app">
-        <div className="content">
-          <Routes>
-            <Route path="/" element={<LoginPage />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/insert" element={<ProtectedRoute><InsertPage /></ProtectedRoute>} />
-            <Route path="/redemption" element={<ProtectedRoute><Redemption /></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
-            <Route path="/contact" element={<ProtectedRoute><ContactPage /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
-            <Route path="/admin/approval" element={<ProtectedAdminRoute><AdminApproval /></ProtectedAdminRoute>} />
-            <Route path="/admin/history" element={<ProtectedAdminRoute><AdminHistory /></ProtectedAdminRoute>} />
-            <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
-            <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
-          </Routes>
-          <div className="connection-status">
-            Backend Status: {isConnected ? 'Connected' : 'Not connected'} <br />
-            Supabase Status: {supabaseStatus} <br />
-            {data && `Message: ${data}`}
+      <BrowserRouter>
+        <div className="app">
+          <div className="content">
+            <Routes>
+              <Route path="/" element={<LoginPage />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/insert" element={<ProtectedRoute><InsertPage /></ProtectedRoute>} />
+              <Route path="/redemption" element={<ProtectedRoute><Redemption /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
+              <Route path="/contact" element={<ProtectedRoute><ContactPage /></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
+              <Route path="/admin/approval" element={<ProtectedAdminRoute><AdminApproval /></ProtectedAdminRoute>} />
+              <Route path="/admin/history" element={<ProtectedAdminRoute><AdminHistory /></ProtectedAdminRoute>} />
+              <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
+              <Route path="/admin/viewall" element={<ProtectedAdminRoute><ViewAll /></ProtectedAdminRoute>} />
+            </Routes>
+            <div className="connection-status">
+              Backend Status: {isConnected ? 'Connected' : 'Not connected'} <br />
+              Supabase Status: {supabaseStatus} <br />
+              {data && `Message: ${data}`}
+            </div>
           </div>
+          <Footer />
         </div>
-        <Footer />
-      </div>
+      </BrowserRouter>
     </AuthProvider>
   );
 }
