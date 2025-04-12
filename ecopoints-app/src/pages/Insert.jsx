@@ -1,4 +1,3 @@
-// src/pages/Insert.js
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -7,17 +6,15 @@ import { supabase } from '../supabaseClient';
 import '../styles/Insert.css';
 
 const Insert = () => {
-  // Serial connection to ESP32
   const serialRef = useRef(null);
   const readerRef = useRef(null);
   const portRef = useRef(null);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  
+
   const [userData, setUserData] = useState({ 
     name: user.name || 'Guest', 
     points: 0
   });
-
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [systemStatus, setSystemStatus] = useState('Idle');
   const [material, setMaterial] = useState('Unknown');
@@ -31,31 +28,23 @@ const Insert = () => {
   const [timeLeft, setTimeLeft] = useState(30);
   const [timerInterval, setTimerInterval] = useState(null);
 
-  // Handle incoming messages from ESP32
   const processSerialMessage = (message) => {
     console.log('Received from ESP32:', message);
-    
     if (message.startsWith('SESSION_STARTED')) {
       setAlert({ type: 'info', message: 'Sensing session started successfully!' });
-    } 
-    else if (message.startsWith('SESSION_ENDED')) {
+    } else if (message.startsWith('SESSION_ENDED')) {
       setAlert({ type: 'info', message: 'Sensing session ended.' });
       stopSensing();
-    }
-    else if (message.startsWith('DETECTED:')) {
-      const detectedItem = message.split(':')[1];
+    } else if (message.startsWith('DETECTED:')) {
+      const detectedItem = message.split(':')[1]?.trim();
+      if (!detectedItem) return;
       setMaterial(detectedItem);
-      
       if (detectedItem === 'bottle') {
         setBottleCount(prev => prev + 1);
       } else if (detectedItem === 'can') {
         setCanCount(prev => prev + 1);
       }
-      
-      // Update total detected items
       setQuantity(prev => prev + 1);
-      
-      // Update earnings preview in real-time
       updateEarnings(
         detectedItem === 'bottle' ? bottleCount + 1 : bottleCount,
         detectedItem === 'can' ? canCount + 1 : canCount
@@ -63,56 +52,46 @@ const Insert = () => {
     }
   };
 
-  // Connect to the ESP32 through Serial Web API
   const connectToDevice = async () => {
-    if ('serial' in navigator) {
-      try {
-        portRef.current = await navigator.serial.requestPort();
-        await portRef.current.open({ baudRate: 115200 });
-        
-        const decoder = new TextDecoderStream();
-        readerRef.current = portRef.current.readable.pipeThrough(decoder).getReader();
-        
-        // Read serial data loop
-        const readLoop = async () => {
-          try {
-            while (true) {
-              const { value, done } = await readerRef.current.read();
-              if (done) break;
-              
-              // Process each line
-              value.split('\n').forEach(line => {
-                if (line.trim()) {
-                  processSerialMessage(line.trim());
-                }
-              });
-            }
-          } catch (error) {
-            console.error('Error reading from serial port:', error);
-            setAlert({ type: 'error', message: 'Error reading from ESP32 device' });
+    if (!('serial' in navigator)) {
+      setAlert({ type: 'error', message: 'Web Serial API not supported in this browser' });
+      return false;
+    }
+    try {
+      portRef.current = await navigator.serial.requestPort();
+      await portRef.current.open({ baudRate: 115200 });
+      const decoder = new TextDecoderStream();
+      readerRef.current = portRef.current.readable.pipeThrough(decoder).getReader();
+      const readLoop = async () => {
+        try {
+          while (true) {
+            const { value, done } = await readerRef.current.read();
+            if (done) break;
+            value.split('\n').forEach(line => {
+              if (line.trim()) {
+                processSerialMessage(line.trim());
+              }
+            });
           }
-        };
-        
-        readLoop();
-        return true;
-      } catch (error) {
-        console.error('Failed to connect to ESP32:', error);
-        setAlert({ type: 'error', message: 'Could not connect to ESP32 device' });
-        return false;
-      }
-    } else {
-      setAlert({ type: 'error', message: 'Web Serial API is not supported in this browser' });
+        } catch (error) {
+          console.error('Serial read error:', error);
+          setAlert({ type: 'error', message: 'Error reading from ESP32' });
+        }
+      };
+      readLoop();
+      return true;
+    } catch (error) {
+      console.error('Serial connect error:', error);
+      setAlert({ type: 'error', message: 'Failed to connect to ESP32' });
       return false;
     }
   };
 
-  // Send command to ESP32
   const sendToESP32 = async (command) => {
     if (!portRef.current) {
       const connected = await connectToDevice();
       if (!connected) return false;
     }
-    
     try {
       const encoder = new TextEncoder();
       const writer = portRef.current.writable.getWriter();
@@ -120,7 +99,7 @@ const Insert = () => {
       writer.releaseLock();
       return true;
     } catch (error) {
-      console.error('Error writing to serial port:', error);
+      console.error('Serial write error:', error);
       setAlert({ type: 'error', message: 'Error sending command to ESP32' });
       return false;
     }
@@ -128,16 +107,11 @@ const Insert = () => {
 
   const startSensing = async () => {
     if (isSensing) return;
-    
-    // Connect and send start command to ESP32
     const success = await sendToESP32('START');
     if (!success) return;
-    
     setIsSensing(true);
     setSystemStatus('Scanning...');
     resetSensorData();
-    
-    // Start timer countdown
     setTimeLeft(30);
     const interval = setInterval(() => {
       setTimeLeft(prev => {
@@ -149,7 +123,6 @@ const Insert = () => {
         return prev - 1;
       });
     }, 1000);
-    
     setTimerInterval(interval);
   };
 
@@ -158,12 +131,9 @@ const Insert = () => {
       clearInterval(timerInterval);
       setTimerInterval(null);
     }
-    
     setIsSensing(false);
     setSystemStatus('Idle');
     setTimer('');
-    
-    // Let ESP32 know we're stopping
     await sendToESP32('STOP');
   };
 
@@ -176,16 +146,11 @@ const Insert = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (!user.id) {
       setAlert({ type: 'error', message: 'You must be logged in to save recyclables' });
       return;
     }
-    
-    // First stop the sensing session
     await stopSensing();
-    
-    // Save to Supabase directly
     try {
       const { data, error } = await supabase
         .from('recycling_sessions')
@@ -197,29 +162,29 @@ const Insert = () => {
             points_earned: pointsEarned,
             money_value: parseFloat(moneyEarned)
           }
-        ]);
-      
-      if (error) throw error;
-      
-      // Update user points in Supabase
+        ])
+        .select();
+      if (error) {
+        console.error('Supabase insert error:', error.message, error.details);
+        throw new Error(`Failed to save session: ${error.message}`);
+      }
       const { data: userData, error: userError } = await supabase
         .from('users')
         .update({ points: user.points + pointsEarned })
         .eq('id', user.id)
         .select();
-      
-      if (userError) throw userError;
-      
-      // Update local storage with new points
+      if (userError) {
+        console.error('Supabase update error:', userError.message, userError.details);
+        throw new Error(`Failed to update user: ${userError.message}`);
+      }
       const updatedUser = { ...user, points: user.points + pointsEarned };
       localStorage.setItem('user', JSON.stringify(updatedUser));
-      
+      setUserData(updatedUser);
       setAlert({ type: 'success', message: 'Recyclables added successfully!' });
       resetSensorData();
-      
     } catch (error) {
-      console.error('Error saving recyclables:', error);
-      setAlert({ type: 'error', message: 'Failed to save recyclables: ' + error.message });
+      console.error('Submit error:', error.message);
+      setAlert({ type: 'error', message: error.message });
     }
   };
 
@@ -232,53 +197,60 @@ const Insert = () => {
     setMoneyEarned(0);
   };
 
-  // Display timer while sensing
   useEffect(() => {
     if (isSensing) {
       setTimer(`Time Left: ${timeLeft}s`);
     }
   }, [timeLeft, isSensing]);
 
-  // Fetch user data on component mount
   useEffect(() => {
     const fetchUserData = async () => {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-      
-      if (error) {
-        console.error('Error fetching user data:', error);
-        setAlert({ type: 'error', message: 'Failed to load user data' });
-      } else if (data) {
+      if (!user.id) {
+        console.warn('No user ID in localStorage, skipping fetch');
+        setAlert({ type: 'warning', message: 'Please log in to view user data' });
+        return;
+      }
+      try {
+        console.log('Fetching user data for ID:', user.id);
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        if (error) {
+          console.error('Supabase fetch error:', error.message, error.details, error.hint);
+          throw new Error(`Failed to fetch user data: ${error.message}`);
+        }
+        if (!data) {
+          console.warn('No user found for ID:', user.id);
+          throw new Error('User not found');
+        }
+        console.log('User data fetched:', data);
         setUserData(data);
+      } catch (error) {
+        console.error('Fetch user error:', error.message);
+        setAlert({ type: 'error', message: error.message });
       }
     };
-
-    if (user.id) {
-      fetchUserData();
-    }
-
-    // Clean up serial connection when component unmounts
+    fetchUserData();
     return () => {
       if (readerRef.current) {
-        readerRef.current.cancel();
+        readerRef.current.cancel().catch(() => {});
       }
-      if (portRef.current?.readable?.locked) {
-        readerRef.current.releaseLock();
-      }
-      if (portRef.current?.writable?.locked) {
-        portRef.current.writable.getWriter().releaseLock();
-      }
-      if (portRef.current && portRef.current.close) {
-        portRef.current.close();
+      if (portRef.current) {
+        if (portRef.current.readable?.locked) {
+          readerRef.current.releaseLock();
+        }
+        if (portRef.current.writable?.locked) {
+          portRef.current.writable.getWriter().releaseLock();
+        }
+        portRef.current.close().catch(() => {});
       }
       if (timerInterval) {
         clearInterval(timerInterval);
       }
     };
-  }, []);
+  }, [user.id]);
 
   return (
     <Layout title="Insert Recyclables">
@@ -288,7 +260,6 @@ const Insert = () => {
           <button onClick={() => setAlert({ type: '', message: '' })}>×</button>
         </div>
       )}
-      
       <div className="insert-grid">
         <div className="status-card">
           <div className="stat-label"><FontAwesomeIcon icon={faRecycle} /> Sensor Status</div>
@@ -296,13 +267,11 @@ const Insert = () => {
           <div className="stat-label">Material: {material}</div>
           <div className="stat-value">{quantity}</div>
           <div className="stat-label">Items Detected</div>
-          
           <div className="detection-counts">
             <div>Bottles: {bottleCount}</div>
             <div>Cans: {canCount}</div>
           </div>
         </div>
-
         <div className="control-card">
           <form onSubmit={handleSubmit}>
             <div className="button-group">
@@ -333,7 +302,6 @@ const Insert = () => {
             <div className="timer-display">{timer}</div>
           </form>
         </div>
-
         <div className="preview-card">
           <div className="stat-label">Earnings Preview</div>
           <div className="stat-value">{pointsEarned}</div>
