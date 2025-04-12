@@ -51,27 +51,36 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/control', async (req, res) => {
   try {
-    console.log('GET /api/control called');
+    console.log('GET /api/control called for device_id: esp32-cam-1');
     const { data, error } = await supabase
       .from('device_control')
       .select('command')
       .eq('device_id', 'esp32-cam-1')
-      .single();
+      .maybeSingle(); // Use maybeSingle to handle no results
 
     if (error) {
-      console.error('Control query error:', error.message);
+      console.error('Supabase query error:', error.message, error.details);
       return res.status(500).json({ message: 'Failed to fetch control command', error: error.message });
     }
 
     if (!data) {
-      console.log('No control data found, returning default stop');
+      console.log('No control data found for esp32-cam-1, returning default stop');
+      // Auto-insert default stop command
+      const { error: insertError } = await supabase
+        .from('device_control')
+        .insert([{ device_id: 'esp32-cam-1', command: 'stop', updated_at: new Date().toISOString() }]);
+
+      if (insertError) {
+        console.error('Failed to insert default stop:', insertError.message);
+      }
       return res.json({ command: 'stop' });
     }
 
+    console.log('Control data found:', data);
     res.json({ command: data.command });
   } catch (error) {
-    console.error('Control endpoint error:', error.message);
-    res.status(500).json({ message: 'Server error in control endpoint' });
+    console.error('Control endpoint error:', error.message, error.stack);
+    res.status(500).json({ message: 'Server error in control endpoint', error: error.message });
   }
 });
 
@@ -91,14 +100,14 @@ app.post('/api/control', async (req, res) => {
       ]);
 
     if (error) {
-      console.error('Control update error:', error.message);
+      console.error('Control update error:', error.message, error.details);
       return res.status(500).json({ message: 'Failed to update command', error: error.message });
     }
 
     res.json({ message: `Command ${command} set for device ${device_id}` });
   } catch (error) {
-    console.error('Control post error:', error.message);
-    res.status(500).json({ message: 'Server error in control post' });
+    console.error('Control post error:', error.message, error.stack);
+    res.status(500).json({ message: 'Server error in control post', error: error.message });
   }
 });
 
@@ -113,7 +122,7 @@ app.post('/api/recyclables', async (req, res) => {
 
     const recyclableData = {
       material,
-      quantity: parseInt(quantity), // Ensure quantity is integer
+      quantity: parseInt(quantity),
       device_id,
       timestamp: new Date().toISOString(),
     };
@@ -128,14 +137,14 @@ app.post('/api/recyclables', async (req, res) => {
       .select();
 
     if (error) {
-      console.error('Recyclables insert error:', error.message);
+      console.error('Recyclables insert error:', error.message, error.details);
       return res.status(500).json({ message: 'Failed to store recyclable data', error: error.message });
     }
 
     res.status(201).json({ message: 'Recyclable data stored', data });
   } catch (error) {
-    console.error('Recyclables endpoint error:', error.message);
-    res.status(500).json({ message: 'Server error in recyclables endpoint' });
+    console.error('Recyclables endpoint error:', error.message, error.stack);
+    res.status(500).json({ message: 'Server error in recyclables endpoint', error: error.message });
   }
 });
 
@@ -177,8 +186,8 @@ app.post('/api/login', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Login error:', error.message);
-    res.status(500).json({ message: 'Server error during login' });
+    console.error('Login error:', error.message, error.stack);
+    res.status(500).json({ message: 'Server error during login', error: error.message });
   }
 });
 
@@ -234,7 +243,7 @@ app.post('/api/auth/signup', async (req, res) => {
       user: authData.user,
     });
   } catch (error) {
-    console.error('Registration error:', error.message);
+    console.error('Registration error:', error.message, error.stack);
     res.status(500).json({ message: 'Registration failed', error: error.message });
   }
 });
