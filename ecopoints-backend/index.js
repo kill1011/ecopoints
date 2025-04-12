@@ -1,3 +1,4 @@
+// app.js (partial update)
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -9,7 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 dotenv.config();
 
 // Validate environment variables
-const requiredEnv = ['SUPABASE_URL', 'SUPABASE_KEY', 'JWT_SECRET'];
+const requiredEnv = ['SUPABASE_URL', 'SUPABASE_KEY', 'JWT_SECRET', 'ESP32_API_KEY'];
 const missingEnv = requiredEnv.filter(key => !process.env[key]);
 if (missingEnv.length) {
   console.error(`Missing environment variables: ${missingEnv.join(', ')}`);
@@ -39,7 +40,7 @@ app.use(cors({
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-API-Key'],
 }));
 
 // Middleware to parse JSON
@@ -61,6 +62,16 @@ const authenticateToken = (req, res, next) => {
     req.user = user;
     next();
   });
+};
+
+// API key middleware for ESP32
+const authenticateESP32 = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey !== process.env.ESP32_API_KEY) {
+    console.log(`Invalid API key for ${req.method} ${req.url}`);
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+  next();
 };
 
 // Routes
@@ -113,7 +124,7 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-app.get('/api/control', async (req, res) => {
+app.get('/api/control', authenticateESP32, async (req, res) => {
   try {
     console.log('GET /api/control for esp32-cam-1');
     const { data, error } = await supabase
@@ -169,7 +180,7 @@ app.get('/api/control', async (req, res) => {
   }
 });
 
-app.post('/api/control', async (req, res) => {
+app.post('/api/control', authenticateToken, async (req, res) => {
   const { command, device_id = 'esp32-cam-1' } = req.body;
   try {
     console.log(`POST /api/control:`, { command, device_id });
@@ -211,7 +222,7 @@ app.post('/api/control', async (req, res) => {
   }
 });
 
-app.post('/api/recyclables', async (req, res) => {
+app.post('/api/recyclables', authenticateESP32, async (req, res) => {
   const { material, quantity, device_id, user_id } = req.body;
   try {
     console.log(`POST /api/recyclables:`, req.body);
@@ -259,138 +270,30 @@ app.post('/api/recyclables', async (req, res) => {
   }
 });
 
-app.get('/api/user-stats/:id', authenticateToken, async (req, res) => {
-  const { id } = req.params;
+app.get('/api/recyclables', authenticateToken, async (req, res) => {
   try {
-    console.log(`GET /api/user-stats/${id}`);
-    if (req.user.id !== id && !req.user.is_admin) {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
+    console.log(`GET /api/recyclables from ${req.headers.origin}`);
     const { data, error } = await supabase
-      .from('users')
-      .select('id, name, email, points, is_admin')
-      .eq('id', id)
-      .single();
-    if (error || !data) {
-      console.error('User stats error:', error?.message);
-      return res.status(404).json({ message: 'User not found' });
-    }
-    res.json(data);
-  } catch (error) {
-    console.error('User stats error:', {
-      message: error.message,
-      stack: error.stack
-    });
-    res.status(500).json({ 
-      message: 'Server error', 
-      error: error.message 
-    });
-  }
-});
+      .from('recyclables')
+      .select('id, material, quantity, device_id, timestamp')
+      .eq('device_id', 'esp32-cam-1')
+      .order('timestamp', { ascending: false })
+      .limit(100);
 
-app.post('/api/insert-recyclables', authenticateToken, async (req, res) => {
-  const { user_id, bottle_quantity, can_quantity, points_earned, money_earned } = req.body;
-  try {
-    console.log(`POST /api/insert-recyclables:`, req.body);
-    if (!user_id || bottle_quantity == null || can_quantity == null) {
-      return res.status(400).json({ success: false, message: 'Invalid payload' });
-    }
-    if (req.user.id !== user_id && !req.user.is_admin) {
-      return res.status(403).json({ success: false, message: 'Unauthorized' });
-    }
-    const { data, error } = await supabase
-      .from('recycling_sessions')
-      .insert([{
-        user_id,
-        bottle_count: bottle_quantity,
-        can_count: can_quantity,
-        points_earned,
-        money_value: money_earned,
-        created_at: new Date().toISOString()
-      }])
-      .select();
     if (error) {
-      console.error('Insert recyclables error:', {
+      console.error('Recyclables fetch error:', {
         code: error.code,
         message: error.message
       });
       return res.status(500).json({ 
-        success: false, 
-        message: 'Failed to save', 
+        message: 'Failed to fetch recyclables', 
         error: error.message 
       });
     }
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ points: supabase.raw('points + ?', [points_earned]) })
-      .eq('id', user_id);
-    if (updateError) {
-      console.error('Update points error:', {
-        code: updateError.code,
-        message: updateError.message
-      });
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Failed to update points', 
-        error: updateError.message 
-      });
-    }
-    res.status(201).json({ 
-      success: true, 
-      message: 'Recyclables added', 
-      data 
-    });
+
+    res.json(data);
   } catch (error) {
-    console.error('Insert recyclables error:', {
-      message: error.message,
-      stack: error.stack
-    });
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error', 
-      error: error.message 
-    });
-  }
-});
-
-app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  try {
-    console.log(`POST /api/login: ${email}`);
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (error || !user) {
-      console.log('Login failed: User not found');
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      console.log('Login failed: Invalid password');
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: user.id, is_admin: user.is_admin },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        is_admin: user.is_admin,
-      },
-    });
-  } catch (error) {
-    console.error('Login error:', {
+    console.error('Recyclables fetch error:', {
       message: error.message,
       stack: error.stack
     });
@@ -401,68 +304,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/signup', async (req, res) => {
-  const { email, password, name } = req.body;
-  try {
-    console.log(`POST /api/auth/signup: ${email}`);
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('email')
-      .eq('email', email)
-      .single();
-
-    if (existingUser) {
-      console.log('Signup failed: Email exists');
-      return res.status(400).json({ message: 'Email already registered' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const { data: newUser, error: insertError } = await supabase
-      .from('users')
-      .insert([{
-        id: supabase.raw('gen_random_uuid()'),
-        email,
-        name,
-        password: hashedPassword,
-        points: 0,
-        money: 0,
-        is_admin: false,
-      }])
-      .select()
-      .single();
-
-    if (insertError) {
-      console.error('Signup insert error:', {
-        code: insertError.code,
-        message: insertError.message
-      });
-      return res.status(500).json({ 
-        message: 'Registration failed', 
-        error: insertError.message 
-      });
-    }
-
-    res.status(201).json({
-      message: 'Registration successful',
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-        name: newUser.name,
-      },
-    });
-  } catch (error) {
-    console.error('Signup error:', {
-      message: error.message,
-      stack: error.stack
-    });
-    res.status(500).json({ 
-      message: 'Server error', 
-      error: error.message 
-    });
-  }
-});
+// ... (rest of your routes: /api/user-stats, /api/insert-recyclables, /api/login, /api/auth/signup)
 
 // Error handling
 app.use((req, res) => {
