@@ -1,13 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
+import { createClient } from '@supabase/supabase-js';
 import '../styles/Insert.css';
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app';
+const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL || 'YOUR_SUPABASE_URL';
+const SUPABASE_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const Insert = () => {
-  const wsRef = useRef(null);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [userData, setUserData] = useState({ 
     name: user.name || 'Guest', 
@@ -33,7 +37,8 @@ const Insert = () => {
         body: JSON.stringify({ command: 'start', device_id: 'esp32-cam-1' })
       });
       if (!response.ok) {
-        throw new Error('Failed to start device');
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP ${response.status}`);
       }
       setIsSensing(true);
       setSystemStatus('Scanning...');
@@ -49,17 +54,20 @@ const Insert = () => {
       }, 1000);
     } catch (error) {
       console.error('Start sensing error:', error.message);
-      setAlert({ type: 'error', message: `Failed to start sensing: ${error.message}` });
+      setAlert({ type: 'error', message: `Failed to start: ${error.message}` });
     }
   };
 
   const stopSensing = async () => {
     try {
-      await fetch(`${API_URL}/api/control`, {
+      const response = await fetch(`${API_URL}/api/control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'stop', device_id: 'esp32-cam-1' })
       });
+      if (!response.ok) {
+        console.warn('Stop failed:', response.status);
+      }
     } catch (error) {
       console.error('Stop sensing error:', error.message);
     }
@@ -80,7 +88,7 @@ const Insert = () => {
     const userId = localStorage.getItem('user_id');
     const token = localStorage.getItem('token');
     if (!userId || !token) {
-      setAlert({ type: 'error', message: 'Please log in to save recyclables' });
+      setAlert({ type: 'error', message: 'Please log in' });
       return;
     }
     const payload = { 
@@ -101,11 +109,11 @@ const Insert = () => {
       });
       const result = await response.json();
       if (response.ok && result.success) {
-        setAlert({ type: 'success', message: 'Recyclables added successfully!' });
+        setAlert({ type: 'success', message: 'Recyclables added!' });
         resetSensorData();
         await fetchUserData();
       } else {
-        throw new Error(result.message || 'Failed to add recyclables');
+        throw new Error(result.message || 'Failed to add');
       }
     } catch (error) {
       console.error('Submit error:', error.message);
@@ -127,13 +135,12 @@ const Insert = () => {
     const userId = localStorage.getItem('user_id');
     const token = localStorage.getItem('token');
     if (!userId || !token) {
-      console.warn('No user ID or token, redirecting to login');
+      setAlert({ type: 'error', message: 'Session expired' });
       window.location.href = '/login';
       return;
     }
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`Attempt ${attempt}: Fetching user data for ID: ${userId}`);
         const response = await fetch(`${API_URL}/api/user-stats/${userId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -141,26 +148,21 @@ const Insert = () => {
           }
         });
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const errorData = await response.json();
+          throw new Error(errorData.message || `HTTP ${response.status}`);
         }
         const data = await response.json();
         if (!data.name || typeof data.points === 'undefined') {
-          throw new Error('Invalid user data format');
+          throw new Error('Invalid user data');
         }
-        console.log('User data fetched:', data);
         setUserData(data);
         return;
       } catch (error) {
-        console.error(`Fetch attempt ${attempt} failed:`, error.message);
+        console.error(`Fetch attempt ${attempt}:`, error.message);
         if (attempt < retries) {
-          console.log(`Retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         } else {
-          console.error('Final fetch error:', error.message);
-          setAlert({
-            type: 'error',
-            message: `Failed to load user data: ${error.message}`
-          });
+          setAlert({ type: 'error', message: `Failed to load user: ${error.message}` });
           setUserData({ name: 'Guest', points: 0 });
           window.location.href = '/login';
         }
@@ -170,32 +172,39 @@ const Insert = () => {
 
   useEffect(() => {
     fetchUserData();
-    // Poll for recyclables
-    const pollRecyclables = async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/recyclables?device_id=esp32-cam-1`, {
-          headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-        if (data && data.length) {
-          data.forEach(item => {
-            setMaterial(item.material);
-            setQuantity(prev => prev + item.quantity);
-            if (item.material === 'bottle') {
-              setBottleCount(prev => prev + item.quantity);
-            } else if (item.material === 'can') {
-              setCanCount(prev => prev + item.quantity);
+
+    // Subscribe to Supabase Realtime
+    const channel = supabase
+      .channel('recyclables')
+      .on(
+        'INSERT',
+        { table: 'recyclables', schema: 'public' },
+        (payload) => {
+          console.log('Realtime detection:', payload);
+          const { material: detectedMaterial, quantity: detectedQuantity, device_id } = payload.new;
+          if (device_id === 'esp32-cam-1') {
+            setMaterial(detectedMaterial);
+            setQuantity(prev => prev + detectedQuantity);
+            if (detectedMaterial === 'bottle') {
+              setBottleCount(prev => prev + detectedQuantity);
+            } else if (detectedMaterial === 'can') {
+              setCanCount(prev => prev + detectedQuantity);
             }
-          });
-          updateEarnings();
+            updateEarnings();
+          }
         }
-      } catch (error) {
-        console.error('Poll recyclables error:', error.message);
-      }
-    };
-    const interval = setInterval(pollRecyclables, 5000);
+      )
+      .subscribe((status) => {
+        console.log('Realtime status:', status);
+        if (status === 'SUBSCRIBED') {
+          setAlert({ type: 'info', message: 'Connected to sensor' });
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setAlert({ type: 'warning', message: 'Sensor disconnected' });
+        }
+      });
+
     return () => {
-      clearInterval(interval);
+      supabase.removeChannel(channel);
       stopSensing();
     };
   }, []);
