@@ -3,10 +3,19 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import { supabase } from './config/supabase.js';
+import { createClient } from '@supabase/supabase-js';
 
 // Initialize environment variables
 dotenv.config();
+
+// Validate environment variables
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY || !process.env.JWT_SECRET) {
+  console.error('Missing environment variables: SUPABASE_URL, SUPABASE_KEY, or JWT_SECRET');
+  process.exit(1);
+}
+
+// Initialize Supabase client
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Create Express application
 const app = express();
@@ -35,12 +44,19 @@ app.get('/', (req, res) => {
   res.json({ message: 'EcoPoints API is running' });
 });
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   console.log('Health check received from:', req.headers.origin);
   try {
+    // Test Supabase connection
+    const { data, error } = await supabase.from('device_control').select('device_id').limit(1);
+    if (error) {
+      console.error('Supabase health check failed:', error.message);
+      return res.status(500).json({ status: 'error', message: 'Supabase connection issue' });
+    }
     res.json({
       status: 'ok',
       server: 'running',
+      supabase: 'connected',
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -56,22 +72,24 @@ app.get('/api/control', async (req, res) => {
       .from('device_control')
       .select('command')
       .eq('device_id', 'esp32-cam-1')
-      .maybeSingle(); // Use maybeSingle to handle no results
+      .maybeSingle();
 
     if (error) {
-      console.error('Supabase query error:', error.message, error.details);
-      return res.status(500).json({ message: 'Failed to fetch control command', error: error.message });
+      console.error('Supabase query error:', error.message, error.details, error.hint);
+      // Fallback: return stop if query fails
+      return res.json({ command: 'stop', warning: 'Supabase query failed, using default' });
     }
 
     if (!data) {
-      console.log('No control data found for esp32-cam-1, returning default stop');
-      // Auto-insert default stop command
+      console.log('No control data found for esp32-cam-1');
+      // Auto-insert default stop
       const { error: insertError } = await supabase
         .from('device_control')
         .insert([{ device_id: 'esp32-cam-1', command: 'stop', updated_at: new Date().toISOString() }]);
 
       if (insertError) {
-        console.error('Failed to insert default stop:', insertError.message);
+        console.error('Failed to insert default stop:', insertError.message, insertError.details);
+        return res.json({ command: 'stop', warning: 'Failed to initialize device_control' });
       }
       return res.json({ command: 'stop' });
     }
@@ -80,7 +98,8 @@ app.get('/api/control', async (req, res) => {
     res.json({ command: data.command });
   } catch (error) {
     console.error('Control endpoint error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error in control endpoint', error: error.message });
+    // Ultimate fallback
+    res.json({ command: 'stop', error: 'Unexpected server error' });
   }
 });
 
@@ -107,7 +126,7 @@ app.post('/api/control', async (req, res) => {
     res.json({ message: `Command ${command} set for device ${device_id}` });
   } catch (error) {
     console.error('Control post error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error in control post', error: error.message });
+    res.status(500).json({ message: 'Server error in control post' });
   }
 });
 
@@ -144,7 +163,7 @@ app.post('/api/recyclables', async (req, res) => {
     res.status(201).json({ message: 'Recyclable data stored', data });
   } catch (error) {
     console.error('Recyclables endpoint error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error in recyclables endpoint', error: error.message });
+    res.status(500).json({ message: 'Server error in recyclables endpoint' });
   }
 });
 
@@ -187,7 +206,7 @@ app.post('/api/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error during login', error: error.message });
+    res.status(500).json({ message: 'Server error during login' });
   }
 });
 
@@ -257,7 +276,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Global error:', err.message, err.stack);
   res.status(500).json({
-    message: 'Internal server error',
+    message: 'A server error has occurred',
     error: err.message,
   });
 });
