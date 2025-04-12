@@ -7,7 +7,7 @@ import '../styles/Insert.css';
 
 const PUSHER_KEY = '528b7d374844d8b54864';
 const PUSHER_CLUSTER = 'ap1';
-const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-teal.vercel.app';
+const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app'; // Fixed
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -63,9 +63,9 @@ const Insert = () => {
     return () => {
       channel.unbind_all();
       pusher.disconnect();
-      stopSensing();
+      if (isSensing) stopSensing();
     };
-  }, []);
+  }, [isSensing]);
 
   const updateEarnings = () => {
     const points = bottleCount * 2 + canCount * 3;
@@ -78,13 +78,9 @@ const Insert = () => {
     if (isSensing || isLoading) return;
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/api/control`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'start', device_id: 'esp32-cam-1' }),
       });
 
@@ -109,7 +105,6 @@ const Insert = () => {
     } catch (error) {
       console.error('Start sensing error:', error);
       setAlert({ type: 'error', message: error.message });
-      setIsSensing(false);
       setSystemStatus('Idle');
     } finally {
       setIsLoading(false);
@@ -120,13 +115,9 @@ const Insert = () => {
     if (!isSensing || isLoading) return;
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/api/control`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'stop', device_id: 'esp32-cam-1' }),
       });
 
@@ -189,7 +180,6 @@ const Insert = () => {
       }
 
       const { data } = await response.json();
-      // Update user points locally
       const updatedUser = {
         ...user,
         points: (user.points || 0) + pointsEarned,
@@ -200,7 +190,6 @@ const Insert = () => {
         points: prev.points + pointsEarned,
       }));
 
-      // Store locally as backup
       const sessions = JSON.parse(localStorage.getItem('recycling_sessions') || '[]');
       sessions.push({
         ...session,
@@ -210,7 +199,7 @@ const Insert = () => {
 
       setAlert({ type: 'success', message: 'Recyclables recorded successfully!' });
       resetSensorData();
-      stopSensing();
+      await stopSensing();
     } catch (error) {
       console.error('Submit error:', error);
       setAlert({ type: 'error', message: error.message });
