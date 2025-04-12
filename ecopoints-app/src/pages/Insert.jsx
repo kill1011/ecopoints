@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
+import Pusher from 'pusher-js';
 import '../styles/Insert.css';
 
-const WS_URL = 'ws://192.168.254.110'; // Replace with your ESP32-CAM's IP address
+const PUSHER_KEY = '528b7d374844d8b54864'; // Your Pusher key
+const PUSHER_CLUSTER = 'ap1'; // Your Pusher cluster
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -22,22 +24,31 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
-  const [ws, setWs] = useState(null);
+  const [pusher, setPusher] = useState(null);
+  const [channel, setChannel] = useState(null);
 
   useEffect(() => {
-    const websocket = new WebSocket(WS_URL);
+    let pusherClient;
+    try {
+      pusherClient = new Pusher(PUSHER_KEY, {
+        cluster: PUSHER_CLUSTER,
+        forceTLS: true
+      });
+      setPusher(pusherClient);
+    } catch (error) {
+      console.error('Pusher initialization failed:', error);
+      setAlert({ type: 'error', message: 'Failed to connect to sensor service' });
+      return;
+    }
 
-    websocket.onopen = () => {
-      console.log('Connected to ESP32-CAM WebSocket');
-      setAlert({ type: 'info', message: 'Connected to sensor' });
-    };
+    const pusherChannel = pusherClient.subscribe('ecopoints');
+    setChannel(pusherChannel);
 
-    websocket.onmessage = (event) => {
-      console.log('WebSocket message:', event.data);
+    pusherChannel.bind('detection', (data) => {
+      console.log('Pusher detection:', data);
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'detection' && data.device_id === 'esp32-cam-1') {
-          const { material: detectedMaterial, quantity: detectedQuantity } = data;
+        const { material: detectedMaterial, quantity: detectedQuantity, device_id } = data;
+        if (device_id === 'esp32-cam-1') {
           setMaterial(detectedMaterial);
           setQuantity(prev => prev + detectedQuantity);
           if (detectedMaterial === 'bottle') {
@@ -48,33 +59,42 @@ const Insert = () => {
           updateEarnings();
         }
       } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
+        console.error('Error processing detection:', error);
+        setAlert({ type: 'error', message: 'Invalid sensor data' });
       }
-    };
+    });
 
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
+    pusherChannel.bind('pusher:subscription_succeeded', () => {
+      setAlert({ type: 'info', message: 'Connected to sensor' });
+    });
+
+    pusherChannel.bind('pusher:subscription_error', (error) => {
+      console.error('Pusher subscription error:', error);
       setAlert({ type: 'error', message: 'Sensor connection failed' });
-    };
-
-    websocket.onclose = () => {
-      console.log('WebSocket disconnected');
-      setAlert({ type: 'warning', message: 'Disconnected from sensor' });
-    };
-
-    setWs(websocket);
+    });
 
     return () => {
-      websocket.close();
+      if (pusherChannel) {
+        pusherChannel.unbind_all();
+        pusherClient.unsubscribe('ecopoints');
+      }
+      if (pusherClient) {
+        pusherClient.disconnect();
+      }
       stopSensing();
     };
   }, []);
 
-  const startSensing = () => {
-    if (isSensing || !ws) return;
+  const startSensing = async () => {
+    if (isSensing || !pusher || !channel) {
+      if (!pusher || !channel) {
+        setAlert({ type: 'error', message: 'No sensor connection. Please try again.' });
+      }
+      return;
+    }
     setIsSensing(true);
     setSystemStatus('Scanning...');
-    ws.send(JSON.stringify({ command: 'start' }));
+    // Send start command (requires backend API, see Step 3)
     let timeLeft = 30;
     const interval = setInterval(() => {
       if (!isSensing) {
@@ -88,11 +108,10 @@ const Insert = () => {
   };
 
   const stopSensing = () => {
-    if (!ws) return;
     setIsSensing(false);
     setSystemStatus('Idle');
     setTimer('');
-    ws.send(JSON.stringify({ command: 'stop' }));
+    // Send stop command (requires backend API, see Step 3)
   };
 
   const updateEarnings = () => {
@@ -115,7 +134,7 @@ const Insert = () => {
     sessions.push(session);
     localStorage.setItem('recycling_sessions', JSON.stringify(sessions));
     
-    setAlert({ type: 'success', message: 'Recyclables recorded locally!' });
+    setAlert({ type: 'success', message: 'Recyclables recorded!' });
     resetSensorData();
     stopSensing();
   };
@@ -156,7 +175,7 @@ const Insert = () => {
                 type="button"
                 className="control-btn start-btn"
                 onClick={startSensing}
-                disabled={isSensing || !ws}
+                disabled={isSensing || !pusher || !channel}
               >
                 <FontAwesomeIcon icon={faPlay} /> Start Sensing
               </button>
