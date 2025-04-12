@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { createClient } from '@supabase/supabase-js';
+import { WebSocketServer } from 'ws';
 
 // Initialize environment variables
 dotenv.config();
@@ -17,7 +18,13 @@ if (missingEnv.length) {
 }
 
 // Initialize Supabase client
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+let supabase;
+try {
+  supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+} catch (error) {
+  console.error('Supabase client initialization failed:', error.message);
+  process.exit(1);
+}
 
 // Create Express application
 const app = express();
@@ -27,7 +34,7 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'https://ecopoints-teal.vercel.app',
-    'http://192.168.0.0/16', // ESP32-CAM local IPs
+    /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}$/ // ESP32-CAM IPs
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -42,12 +49,12 @@ const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) {
-    console.log('No token provided for:', req.url);
+    console.log(`No token provided for ${req.method} ${req.url}`);
     return res.status(401).json({ message: 'Token required' });
   }
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
-      console.log('Invalid token for:', req.url, err.message);
+      console.log(`Invalid token for ${req.method} ${req.url}:`, err.message);
       return res.status(403).json({ message: 'Invalid token' });
     }
     req.user = user;
@@ -57,17 +64,17 @@ const authenticateToken = (req, res, next) => {
 
 // API Routes
 app.get('/api/hello', (req, res) => {
-  console.log('GET /api/hello from:', req.headers.origin);
+  console.log(`GET /api/hello from ${req.headers.origin}`);
   res.json({ message: 'Hello from the backend!' });
 });
 
 app.get('/', (req, res) => {
-  console.log('GET / from:', req.headers.origin);
+  console.log(`GET / from ${req.headers.origin}`);
   res.json({ message: 'EcoPoints API is running' });
 });
 
 app.get('/api/health', async (req, res) => {
-  console.log('GET /api/health from:', req.headers.origin);
+  console.log(`GET /api/health from ${req.headers.origin}`);
   try {
     const { data, error } = await supabase
       .from('device_control')
@@ -93,7 +100,10 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Health check error:', error.message, error.stack);
+    console.error('Health check error:', {
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
       status: 'error', 
       message: 'Health check failed', 
@@ -103,7 +113,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/debug', (req, res) => {
-  console.log('GET /api/debug from:', req.headers.origin);
+  console.log(`GET /api/debug from ${req.headers.origin}`);
   res.json({
     message: 'Debug endpoint',
     env: {
@@ -125,7 +135,7 @@ app.get('/api/control', async (req, res) => {
       .maybeSingle();
 
     if (error) {
-      console.error('Supabase query error:', {
+      console.error('Supabase control query error:', {
         code: error.code,
         message: error.message,
         details: error.details,
@@ -138,7 +148,7 @@ app.get('/api/control', async (req, res) => {
     }
 
     if (!data) {
-      console.log('No control data found, initializing...');
+      console.log('No control data, initializing...');
       const { error: insertError } = await supabase
         .from('device_control')
         .insert([{ 
@@ -147,7 +157,7 @@ app.get('/api/control', async (req, res) => {
           updated_at: new Date().toISOString() 
         }]);
       if (insertError) {
-        console.error('Insert error:', {
+        console.error('Control insert error:', {
           code: insertError.code,
           message: insertError.message,
           details: insertError.details
@@ -161,10 +171,13 @@ app.get('/api/control', async (req, res) => {
     }
 
     console.log('Control data:', data);
-    return res.json({ command: data.command });
+    res.json({ command: data.command });
   } catch (error) {
-    console.error('Control endpoint error:', error.message, error.stack);
-    return res.status(500).json({ 
+    console.error('Control endpoint error:', {
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ 
       command: 'stop', 
       error: `Server error: ${error.message}` 
     });
@@ -173,11 +186,10 @@ app.get('/api/control', async (req, res) => {
 
 app.post('/api/control', async (req, res) => {
   const { command, device_id = 'esp32-cam-1' } = req.body;
-
   try {
-    console.log('POST /api/control:', { command, device_id });
-    if (!['start', 'stop'].includes(command)) {
-      return res.status(400).json({ message: 'Invalid command' });
+    console.log(`POST /api/control:`, { command, device_id });
+    if (!command || !['start', 'stop'].includes(command)) {
+      return res.status(400).json({ message: 'Invalid or missing command' });
     }
 
     const { data, error } = await supabase
@@ -188,7 +200,7 @@ app.post('/api/control', async (req, res) => {
       .select();
 
     if (error) {
-      console.error('Control update error:', {
+      console.error('Control upsert error:', {
         code: error.code,
         message: error.message,
         details: error.details
@@ -204,7 +216,10 @@ app.post('/api/control', async (req, res) => {
       data 
     });
   } catch (error) {
-    console.error('Control post error:', error.message, error.stack);
+    console.error('Control post error:', {
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
       message: 'Server error in control post', 
       error: error.message 
@@ -214,9 +229,8 @@ app.post('/api/control', async (req, res) => {
 
 app.post('/api/recyclables', async (req, res) => {
   const { material, quantity, device_id, user_id } = req.body;
-
   try {
-    console.log('POST /api/recyclables:', req.body);
+    console.log(`POST /api/recyclables:`, req.body);
     if (!material || !quantity || !device_id) {
       return res.status(400).json({ message: 'Material, quantity, and device_id are required' });
     }
@@ -249,9 +263,19 @@ app.post('/api/recyclables', async (req, res) => {
       });
     }
 
+    // Broadcast to WebSocket clients
+    wss.clients.forEach(client => {
+      if (client.readyState === client.OPEN) {
+        client.send(JSON.stringify({ type: 'detection', material, quantity }));
+      }
+    });
+
     res.status(201).json({ message: 'Recyclable data stored', data });
   } catch (error) {
-    console.error('Recyclables endpoint error:', error.message, error.stack);
+    console.error('Recyclables endpoint error:', {
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
       message: 'Server error in recyclables endpoint', 
       error: error.message 
@@ -262,7 +286,7 @@ app.post('/api/recyclables', async (req, res) => {
 app.get('/api/user-stats/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
-    console.log(`GET /api/user-stats/${id} from:`, req.headers.origin);
+    console.log(`GET /api/user-stats/${id} from ${req.headers.origin}`);
     if (req.user.id !== id && !req.user.is_admin) {
       return res.status(403).json({ message: 'Unauthorized' });
     }
@@ -277,15 +301,21 @@ app.get('/api/user-stats/:id', authenticateToken, async (req, res) => {
     }
     res.json(data);
   } catch (error) {
-    console.error('User stats error:', error.message, error.stack);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('User stats error:', {
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message 
+    });
   }
 });
 
 app.post('/api/insert-recyclables', authenticateToken, async (req, res) => {
   const { user_id, bottle_quantity, can_quantity, points_earned, money_earned } = req.body;
   try {
-    console.log('POST /api/insert-recyclables:', req.body);
+    console.log(`POST /api/insert-recyclables:`, req.body);
     if (!user_id || bottle_quantity == null || can_quantity == null) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
@@ -320,7 +350,7 @@ app.post('/api/insert-recyclables', authenticateToken, async (req, res) => {
       .update({ points: supabase.raw('points + ?', [points_earned]) })
       .eq('id', user_id);
     if (updateError) {
-      console.error('Update user error:', {
+      console.error('Update user points error:', {
         code: updateError.code,
         message: updateError.message,
         details: updateError.details
@@ -337,7 +367,10 @@ app.post('/api/insert-recyclables', authenticateToken, async (req, res) => {
       data 
     });
   } catch (error) {
-    console.error('Insert recyclables error:', error.message, error.stack);
+    console.error('Insert recyclables error:', {
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
       success: false, 
       message: 'Server error', 
@@ -349,7 +382,7 @@ app.post('/api/insert-recyclables', authenticateToken, async (req, res) => {
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    console.log('POST /api/login:', email);
+    console.log(`POST /api/login: ${email}`);
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
@@ -383,7 +416,10 @@ app.post('/api/login', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Login error:', error.message, error.stack);
+    console.error('Login error:', {
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
       message: 'Server error during login', 
       error: error.message 
@@ -394,7 +430,7 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
   try {
-    console.log('POST /api/auth/signup:', email);
+    console.log(`POST /api/auth/signup: ${email}`);
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -424,7 +460,7 @@ app.post('/api/auth/signup', async (req, res) => {
       .single();
 
     if (insertError) {
-      console.error('Profile insert error:', {
+      console.error('Signup insert error:', {
         code: insertError.code,
         message: insertError.message,
         details: insertError.details
@@ -440,11 +476,14 @@ app.post('/api/auth/signup', async (req, res) => {
       user: {
         id: newUser.id,
         email: newUser.email,
-        name: newUser.name
+        name: newUser.name,
       },
     });
   } catch (error) {
-    console.error('Registration error:', error.message, error.stack);
+    console.error('Signup error:', {
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
       message: 'Server error during signup', 
       error: error.message 
@@ -454,7 +493,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
 // Error handling middleware
 app.use((req, res) => {
-  console.log('404:', req.method, req.url, 'from:', req.headers.origin);
+  console.log(`404: ${req.method} ${req.url} from ${req.headers.origin}`);
   res.status(404).json({ message: 'Route not found' });
 });
 
@@ -469,6 +508,19 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     message: 'A server error has occurred',
     error: err.message,
+  });
+});
+
+// WebSocket setup
+const server = app.listen(0); // Vercel assigns port
+const wss = new WebSocketServer({ server });
+wss.on('connection', (ws) => {
+  console.log('WebSocket client connected');
+  ws.on('close', () => {
+    console.log('WebSocket client disconnected');
+  });
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error.message);
   });
 });
 
