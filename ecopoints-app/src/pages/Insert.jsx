@@ -7,7 +7,7 @@ import '../styles/Insert.css';
 
 const PUSHER_KEY = '528b7d374844d8b54864';
 const PUSHER_CLUSTER = 'ap1';
-const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app'; // Fixed
+const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app';
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -82,11 +82,12 @@ const Insert = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'start', device_id: 'esp32-cam-1' }),
+        mode: 'cors',
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to start sensing');
+        const errorText = await response.text();
+        throw new Error(`Failed to start sensing: ${response.status} ${response.statusText} ${errorText}`);
       }
 
       setIsSensing(true);
@@ -103,8 +104,8 @@ const Insert = () => {
       }, 1000);
       setAlert({ type: 'success', message: 'Sensor started' });
     } catch (error) {
-      console.error('Start sensing error:', error);
-      setAlert({ type: 'error', message: error.message });
+      console.error('Start sensing error:', error.message, error);
+      setAlert({ type: 'error', message: `Start sensing failed: ${error.message}` });
       setSystemStatus('Idle');
     } finally {
       setIsLoading(false);
@@ -119,11 +120,12 @@ const Insert = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'stop', device_id: 'esp32-cam-1' }),
+        mode: 'cors',
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to stop sensing');
+        const errorText = await response.text();
+        throw new Error(`Failed to stop sensing: ${response.status} ${response.statusText} ${errorText}`);
       }
 
       setIsSensing(false);
@@ -131,8 +133,8 @@ const Insert = () => {
       setTimer('');
       setAlert({ type: 'info', message: 'Sensor stopped' });
     } catch (error) {
-      console.error('Stop sensing error:', error);
-      setAlert({ type: 'error', message: error.message });
+      console.error('Stop sensing error:', error.message, error);
+      setAlert({ type: 'error', message: `Stop sensing failed: ${error.message}` });
     } finally {
       setIsLoading(false);
     }
@@ -166,6 +168,7 @@ const Insert = () => {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(session),
+        mode: 'cors',
       });
 
       if (!response.ok) {
@@ -176,7 +179,7 @@ const Insert = () => {
           setUserData({ name: 'Guest', points: 0, id: null });
           throw new Error('Session expired. Please log in again.');
         }
-        throw new Error(errorData.message || 'Failed to record recyclables');
+        throw new Error(errorData.message || `Failed to record recyclables: ${response.status}`);
       }
 
       const { data } = await response.json();
@@ -201,7 +204,7 @@ const Insert = () => {
       resetSensorData();
       await stopSensing();
     } catch (error) {
-      console.error('Submit error:', error);
+      console.error('Submit error:', error.message, error);
       setAlert({ type: 'error', message: error.message });
     } finally {
       setIsLoading(false);

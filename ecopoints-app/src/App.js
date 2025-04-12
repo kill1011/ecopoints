@@ -27,36 +27,30 @@ function App() {
   const checkBackendConnection = async (retries = 3, delay = 1000) => {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        if (!API_URL) {
-          throw new Error('REACT_APP_API_URL is not defined');
-        }
+        if (!API_URL) throw new Error('REACT_APP_API_URL is not defined');
         console.log(`Attempt ${attempt}: Connecting to backend: ${API_URL}/api/health`);
 
         const response = await fetch(`${API_URL}/api/health`, {
           method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
+          mode: 'cors',
         });
 
-        console.log('Response status:', response.status);
+        console.log('Response:', { status: response.status, statusText: response.statusText });
 
         if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`);
+          const errorText = await response.text();
+          throw new Error(`HTTP error! Status: ${response.status} ${response.statusText} ${errorText}`);
         }
 
         const result = await response.json();
         console.log('Backend response:', result);
 
-        if (!result.status) {
-          throw new Error('Response missing "status" field');
-        }
-
-        setData(result.status);
+        setData(result.status || 'ok');
         setIsConnected(true);
         return;
       } catch (error) {
-        console.error(`Attempt ${attempt} failed: ${error.message}`);
+        console.error(`Attempt ${attempt} failed:`, error.message, error);
         if (attempt < retries) {
           console.log(`Retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -72,13 +66,10 @@ function App() {
   const testSupabaseConnection = async () => {
     try {
       const { data: supabaseData, error } = await supabase
-        .from('device_control') // Changed to relevant table
+        .from('device_control')
         .select('device_id, command')
         .limit(1);
-      if (error) {
-        console.error('Supabase error:', error.message, error.details);
-        throw error;
-      }
+      if (error) throw error;
       console.log('Supabase connection successful:', supabaseData);
       setSupabaseStatus('Connected');
     } catch (error) {
