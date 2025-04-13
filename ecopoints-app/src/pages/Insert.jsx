@@ -25,23 +25,24 @@ const Insert = () => {
   const [dbError, setDbError] = useState(false);
 
   useEffect(() => {
-    // Check current device status on load
     checkDeviceStatus();
-    
-    // Subscribe to device status changes
+
     const subscription = supabase
       .channel('device_status_changes')
-      .on('postgres_changes', 
-          { event: 'INSERT', schema: 'public', table: 'device_controls' }, 
-          handleStatusChange)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'device_controls' },
+        handleStatusChange
+      )
       .subscribe();
-          
-    // Subscribe to new recyclable detections
+
     const detectionsSubscription = supabase
       .channel('recyclable_detections')
-      .on('postgres_changes', 
-          { event: 'INSERT', schema: 'public', table: 'recyclables' }, 
-          handleNewDetection)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'recyclables' },
+        handleNewDetection
+      )
       .subscribe();
 
     return () => {
@@ -54,11 +55,11 @@ const Insert = () => {
     try {
       const { data, error } = await supabase
         .from('device_controls')
-        .select('*')
+        .select('command, created_at')
         .eq('device_id', 'esp32-cam-1')
         .order('created_at', { ascending: false })
         .limit(1);
-        
+
       if (error) {
         if (error.message.includes('does not exist')) {
           setDbError(true);
@@ -66,42 +67,49 @@ const Insert = () => {
         }
         throw error;
       }
-      
+
       if (data && data.length > 0) {
         const isActive = data[0].command === 'start';
         setIsSensing(isActive);
         setSystemStatus(isActive ? 'Scanning...' : 'Idle');
       }
-      
-      // Also fetch recent detections
+
       fetchRecentDetections();
     } catch (error) {
       console.error('Error checking device status:', error);
-      setAlert({ 
-        type: 'error', 
-        message: `${error.message}` 
+      setAlert({
+        type: 'error',
+        message: `Failed to check sensor status: ${error.message}`,
       });
     }
   };
 
   const fetchRecentDetections = async () => {
     if (dbError) return;
-    
+
     try {
       const { data, error } = await supabase
         .from('recyclables')
-        .select('*')
+        .select('material, quantity, created_at')
         .eq('device_id', 'esp32-cam-1')
         .order('created_at', { ascending: false })
         .limit(5);
-        
+
       if (error) throw error;
-      
-      if (data) {
-        setDetections(data);
+
+      setDetections(data || []);
+      if (data.length === 0 && isSensing) {
+        setAlert({
+          type: 'warning',
+          message: 'No detections yet. Ensure the sensor is detecting objects (e.g., place a can or bottle ~30cm away in bright light).',
+        });
       }
     } catch (error) {
       console.error('Error fetching detections:', error);
+      setAlert({
+        type: 'error',
+        message: `Failed to fetch detections: ${error.message}`,
+      });
     }
   };
 
@@ -111,9 +119,9 @@ const Insert = () => {
       const isActive = newRecord.command === 'start';
       setIsSensing(isActive);
       setSystemStatus(isActive ? 'Scanning...' : 'Idle');
-      setAlert({ 
-        type: 'info', 
-        message: `Device status changed to: ${isActive ? 'Active' : 'Idle'}` 
+      setAlert({
+        type: 'info',
+        message: `Sensor status changed to: ${isActive ? 'Active' : 'Idle'}`,
       });
     }
   };
@@ -121,10 +129,10 @@ const Insert = () => {
   const handleNewDetection = (payload) => {
     const { new: newDetection } = payload;
     if (newDetection.device_id === 'esp32-cam-1') {
-      setDetections(prev => [newDetection, ...prev.slice(0, 4)]);
-      setAlert({ 
-        type: 'success', 
-        message: `New detection: ${newDetection.material} (${newDetection.quantity})` 
+      setDetections((prev) => [newDetection, ...prev.slice(0, 4)]);
+      setAlert({
+        type: 'success',
+        message: `Detected: ${newDetection.material} (${newDetection.quantity})`,
       });
     }
   };
@@ -132,28 +140,26 @@ const Insert = () => {
   const startSensing = async () => {
     if (isSensing || isLoading || dbError) return;
     setIsLoading(true);
-    
+
     try {
       const newCommand = {
         device_id: 'esp32-cam-1',
         command: 'start',
-        created_at: new Date()
+        created_at: new Date().toISOString(),
       };
-      
-      const { error } = await supabase
-        .from('device_controls')
-        .insert([newCommand]);
-        
+
+      const { error } = await supabase.from('device_controls').insert([newCommand]);
+
       if (error) throw error;
-      
+
       setIsSensing(true);
       setSystemStatus('Scanning...');
-      setAlert({ type: 'success', message: 'Sensor started' });
+      setAlert({ type: 'success', message: 'Sensor started successfully' });
     } catch (error) {
       console.error('Start sensing error:', error);
-      setAlert({ 
-        type: 'error', 
-        message: `Failed to start: ${error.message}` 
+      setAlert({
+        type: 'error',
+        message: `Failed to start sensor: ${error.message}`,
       });
     } finally {
       setIsLoading(false);
@@ -163,28 +169,26 @@ const Insert = () => {
   const stopSensing = async () => {
     if (!isSensing || isLoading || dbError) return;
     setIsLoading(true);
-    
+
     try {
       const newCommand = {
         device_id: 'esp32-cam-1',
         command: 'stop',
-        created_at: new Date()
+        created_at: new Date().toISOString(),
       };
-      
-      const { error } = await supabase
-        .from('device_controls')
-        .insert([newCommand]);
-        
+
+      const { error } = await supabase.from('device_controls').insert([newCommand]);
+
       if (error) throw error;
-      
+
       setIsSensing(false);
       setSystemStatus('Idle');
-      setAlert({ type: 'success', message: 'Sensor stopped' });
+      setAlert({ type: 'success', message: 'Sensor stopped successfully' });
     } catch (error) {
       console.error('Stop sensing error:', error);
-      setAlert({ 
-        type: 'error', 
-        message: `Failed to stop: ${error.message}` 
+      setAlert({
+        type: 'error',
+        message: `Failed to stop sensor: ${error.message}`,
       });
     } finally {
       setIsLoading(false);
@@ -199,13 +203,16 @@ const Insert = () => {
           <button onClick={() => setAlert({ type: '', message: '' })}>×</button>
         </div>
       )}
-      
+
       {dbError && (
         <div className="setup-instructions">
           <h3>Database Setup Required</h3>
           <p>Please go to your Supabase SQL Editor and run the following SQL to set up the required tables:</p>
           <pre>
-{`-- Create the device_controls table
+{`-- Enable uuid-ossp extension for UUID generation
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Create the device_controls table
 CREATE TABLE IF NOT EXISTS public.device_controls (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     device_id TEXT NOT NULL,
@@ -237,7 +244,7 @@ CREATE POLICY "Allow all operations on device_controls"
 CREATE POLICY "Allow all operations on recyclables" 
   ON public.recyclables FOR ALL USING (true);`}
           </pre>
-          <button 
+          <button
             className="control-btn start-btn"
             onClick={() => window.location.reload()}
           >
@@ -245,61 +252,65 @@ CREATE POLICY "Allow all operations on recyclables"
           </button>
         </div>
       )}
-      
-      <div className="insert-grid">
-        <div className="status-card">
-          <div className="stat-label">
-            <FontAwesomeIcon icon={faRecycle} /> Sensor Status
+
+      {!dbError && (
+        <div className="insert-grid">
+          <div className="status-card">
+            <div className="stat-label">
+              <FontAwesomeIcon icon={faRecycle} /> Sensor Status
+            </div>
+            <div className="stat-value" style={{ color: isSensing ? '#4caf50' : '#666' }}>
+              {systemStatus}
+            </div>
           </div>
-          <div className="stat-value" style={{ color: isSensing ? '#4caf50' : '#666' }}>
-            {systemStatus}
+
+          <div className="control-card">
+            <div className="button-group">
+              <button
+                type="button"
+                className="control-btn start-btn"
+                onClick={startSensing}
+                disabled={isSensing || isLoading || dbError}
+              >
+                <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
+              </button>
+
+              <button
+                type="button"
+                className="control-btn stop-btn"
+                onClick={stopSensing}
+                disabled={!isSensing || isLoading || dbError}
+              >
+                <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
+              </button>
+            </div>
+          </div>
+
+          <div className="detections-card">
+            <div className="stat-label">
+              <FontAwesomeIcon icon={faHistory} /> Recent Detections
+            </div>
+            {detections.length > 0 ? (
+              <ul className="detections-list">
+                {detections.map((item) => (
+                  <li key={item.id}>
+                    {item.material} ({item.quantity}) -{' '}
+                    {new Date(item.created_at).toLocaleString()}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>
+                No recent detections. {isSensing ? 'Try placing a can or bottle in view.' : 'Start the sensor to detect items.'}
+              </p>
+            )}
+          </div>
+
+          <div className="preview-card">
+            <div className="stat-label">User: {userData.name}</div>
           </div>
         </div>
-        
-        <div className="control-card">
-          <div className="button-group">
-            <button
-              type="button"
-              className="control-btn start-btn"
-              onClick={startSensing}
-              disabled={isSensing || isLoading || dbError}
-            >
-              <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
-            </button>
-            
-            <button
-              type="button"
-              className="control-btn stop-btn"
-              onClick={stopSensing}
-              disabled={!isSensing || isLoading || dbError}
-            >
-              <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
-            </button>
-          </div>
-        </div>
-        
-        <div className="detections-card">
-          <div className="stat-label">
-            <FontAwesomeIcon icon={faHistory} /> Recent Detections
-          </div>
-          {detections.length > 0 ? (
-            <ul className="detections-list">
-              {detections.map((item, index) => (
-                <li key={index}>
-                  {item.material} ({item.quantity}) - 
-                  {new Date(item.created_at).toLocaleString()}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No recent detections</p>
-          )}
-        </div>
-        
-        <div className="preview-card">
-          <div className="stat-label">User: {userData.name}</div>
-        </div>
-      </div>
+      )}
     </Layout>
   );
 };
