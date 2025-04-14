@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faExchangeAlt, faHistory, faUser } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faExchangeAlt, faHistory, faUser, faList } from '@fortawesome/free-solid-svg-icons';
 import '../styles/Dashboard.css';
 import { supabase } from '../config/supabase';
 import Header from '../components/Header';
@@ -17,6 +17,7 @@ const Dashboard = () => {
     bottles: 0,
     cans: 0,
   });
+  const [recentDetections, setRecentDetections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [error, setError] = useState(null);
@@ -32,35 +33,41 @@ const Dashboard = () => {
     return points / 100; // 100 points = 1 peso
   };
 
+  const calculatePointsAndMoney = (material, quantity) => {
+    const pointsPerItem = 10; // Same as in Insert.jsx
+    const moneyPerItem = 0.05; // Same as in Insert.jsx
+    const totalPoints = quantity * pointsPerItem;
+    const totalMoney = quantity * moneyPerItem;
+    return { points: totalPoints, money: totalMoney };
+  };
+
   useEffect(() => {
     const fetchUserStats = async () => {
       try {
         // Get current session first
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
+
         if (sessionError || !session) {
           setError('Authentication required');
           navigate('/login');
           return;
         }
 
-        // Use the session user ID for the query
-        const { data: userData, error } = await supabase
+        // Fetch user data
+        const { data: userData, error: userError } = await supabase
           .from('users')
           .select('points, money, name, bottles, cans')
           .eq('id', session.user.id)
-          .limit(1)  // Add limit to ensure single row
-          .maybeSingle();  // Use maybeSingle instead of single
+          .limit(1)
+          .maybeSingle();
 
-        if (error) {
-          console.error('Database Error:', error);
-          throw new Error(error.message);
+        if (userError) {
+          console.error('Database Error:', userError);
+          throw new Error(userError.message);
         }
 
         if (!userData) {
           console.log('No user data found, creating default profile...');
-          
-          // Create default user profile if none exists
           const { data: newUser, error: createError } = await supabase
             .from('users')
             .insert([{
@@ -69,33 +76,47 @@ const Dashboard = () => {
               points: 0,
               money: 0,
               bottles: 0,
-              cans: 0
+              cans: 0,
             }])
             .select()
             .single();
 
           if (createError) throw createError;
-          
-          // Use the newly created user data
+
           setStats({
             name: newUser.name,
             points: 0,
             money: 0,
             bottles: 0,
-            cans: 0
+            cans: 0,
           });
         } else {
-          // Calculate money based on points
           const calculatedMoney = calculateMoneyFromPoints(userData.points || 0);
           setStats({
             name: userData.name || 'Guest',
             points: Number(userData.points) || 0,
             money: calculatedMoney,
             bottles: Number(userData.bottles) || 0,
-            cans: Number(userData.cans) || 0
+            cans: Number(userData.cans) || 0,
           });
         }
 
+        // Fetch recent detections from recyclables table
+        const { data: detectionsData, error: detectionsError } = await supabase
+          .from('recyclables')
+          .select('material, quantity, created_at')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        if (detectionsError) throw detectionsError;
+
+        const enrichedDetections = detectionsData.map(detection => ({
+          ...detection,
+          ...calculatePointsAndMoney(detection.material, detection.quantity),
+        }));
+
+        setRecentDetections(enrichedDetections);
         setError(null);
 
       } catch (error) {
@@ -113,7 +134,7 @@ const Dashboard = () => {
     <div className="app-container">
       <Header userName={stats.name} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
       <Sidebar isOpen={isSidebarOpen} />
-      
+
       <div className="dashboard-container">
         {loading ? (
           <div className="loading-state">Loading dashboard data...</div>
@@ -157,6 +178,25 @@ const Dashboard = () => {
                 <div className="stat-value">{stats.bottles.toLocaleString()}</div>
                 <div className="stat-label">Bottles Recycled</div>
               </div>
+            </div>
+
+            {/* New Section for Recent Detections */}
+            <div className="detections-section">
+              <h2>
+                <FontAwesomeIcon icon={faList} /> Recent Materials Received
+              </h2>
+              {recentDetections.length > 0 ? (
+                <ul className="detections-list">
+                  {recentDetections.map((detection) => (
+                    <li key={detection.created_at}>
+                      {detection.material} ({detection.quantity}) - Points: {detection.points}, Value: ₱{detection.money.toFixed(2)} -{' '}
+                      {new Date(detection.created_at).toLocaleString()}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No recent materials received.</p>
+              )}
             </div>
           </main>
         )}
