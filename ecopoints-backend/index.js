@@ -1,171 +1,154 @@
-const Pusher = require('pusher');
-const { createClient } = require('@supabase/supabase-js');
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
+import Pusher from 'pusher';
 
-// Pusher setup with provided credentials
-const pusher = new Pusher({
-  appId: '1975965',
-  key: '0b19c0609da3c9a06820',
-  secret: '542264cd1f75cd43faa9',
-  cluster: 'ap2', // Assumed; verify in Pusher Dashboard
-  useTLS: true,
+dotenv.config();
+
+const app = express();
+
+console.log('Backend initializing...');
+console.log('Environment:', {
+  SUPABASE_URL: process.env.SUPABASE_URL ? 'Set' : 'Missing',
+  SUPABASE_KEY: process.env.SUPABASE_KEY ? 'Set' : 'Missing',
+  PUSHER_APP_ID: process.env.PUSHER_APP_ID ? 'Set' : 'Missing',
 });
 
-// Supabase setup
-const supabase = createClient(
-  process.env.SUPABASE_URL || 'https://welxjeybnoeeusehuoat.supabase.co',
-  process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs'
-);
+app.use(cors({
+  origin: ['http://localhost:5433', 'http://localhost:3000', 'https://ecopoints-teal.vercel.app'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json());
 
-export default async function handler(req, res) {
-  // Log incoming request for debugging
-  console.log(`[Request] ${req.method} ${req.url}`);
-
-  // Normalize path (remove query string)
-  const path = req.url.split('?')[0];
-
-  // Health check endpoint
-  if (path === '/api/health') {
-    if (req.method !== 'GET') {
-      console.log('[Health] Method not allowed:', req.method);
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-    console.log('[Health] Responding with status: OK');
-    return res.status(200).json({ status: 'OK', message: 'Backend is running' });
+let supabase;
+try {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+    throw new Error('Missing Supabase credentials');
   }
+  supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+  console.log('Supabase initialized');
+} catch (error) {
+  console.error('Supabase init error:', error.message);
+  supabase = null;
+}
 
-  // Handle /api/detections
-  if (path === '/api/detections') {
-    if (req.method !== 'POST') {
-      console.log('[Detections] Method not allowed:', req.method);
-      return res.status(405).json({ error: 'Method not allowed' });
+let pusher;
+try {
+  pusher = new Pusher({
+    appId: process.env.PUSHER_APP_ID || '1973570',
+    key: process.env.PUSHER_KEY || '528b7d374844d8b54864',
+    secret: process.env.PUSHER_SECRET || '542264cd1f75cd43faa9"',
+    cluster: process.env.PUSHER_CLUSTER || 'ap1',
+    useTLS: true,
+  });
+  console.log('Pusher initialized');
+} catch (error) {
+  console.error('Pusher init error:', error.message);
+  pusher = null;
+}
+
+app.get('/api/health', async (req, res) => {
+  console.log('GET /api/health');
+  try {
+    if (!supabase) throw new Error('Supabase not initialized');
+    const { error } = await supabase.from('device_control').select('device_id').limit(1);
+    if (error) throw error;
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('Health error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.post('/api/control', async (req, res) => {
+  const { command, device_id = 'esp32-cam-1' } = req.body;
+  console.log('POST /api/control:', { command, device_id });
+  try {
+    if (!supabase) throw new Error('Supabase not initialized');
+    if (!['start', 'stop'].includes(command)) {
+      return res.status(400).json({ message: 'Invalid command' });
     }
+    const { error } = await supabase
+      .from('device_control')
+      .upsert([{ device_id, command, updated_at: new Date().toISOString() }]);
+    if (error) throw error;
+    res.status(200).json({ message: `Command ${command} set` });
+  } catch (error) {
+    console.error('Control POST error:', error.message);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
-    const { material, quantity, device_id, user_id, session_id } = req.body;
-
-    // Validate payload
-    if (!material || !quantity || !device_id || !user_id) {
-      console.log('[Detections] Missing fields:', { material, quantity, device_id, user_id });
-      return res.status(400).json({ error: 'Missing required fields: material, quantity, device_id, user_id' });
+app.post('/api/recyclables', async (req, res) => {
+  const { material, quantity, device_id = 'esp32-cam-1' } = req.body;
+  console.log('POST /api/recyclables:', { material, quantity, device_id });
+  try {
+    if (!supabase) throw new Error('Supabase not initialized');
+    if (!material || !quantity) {
+      return res.status(400).json({ message: 'Missing material or quantity' });
     }
-
-    try {
-      // Save detection to Supabase
-      const { error: dbError } = await supabase
-        .from('session_detections')
-        .insert([
-          {
-            session_id: session_id || null,
-            user_id,
-            material,
-            quantity,
-            device_id,
-            created_at: new Date().toISOString(),
-          },
-        ]);
-
-      if (dbError) {
-        console.error('[Detections] Supabase insert error:', dbError);
-        throw new Error(`Failed to save detection: ${dbError.message}`);
-      }
-
-      // Broadcast to Pusher
-      await pusher.trigger('detections', 'new-detection', {
+    const { error } = await supabase
+      .from('recyclables')
+      .insert([{ material, quantity, device_id, timestamp: new Date().toISOString() }]);
+    if (error) throw error;
+    if (pusher) {
+      await pusher.trigger('ecopoints', 'detection', {
         material,
         quantity,
         device_id,
-        user_id,
-        session_id: session_id || null,
         timestamp: new Date().toISOString(),
       });
-
-      console.log('[Detections] Success:', { material, quantity, device_id, user_id, session_id });
-      return res.status(201).json({ message: 'Detection saved and broadcasted' });
-    } catch (error) {
-      console.error('[Detections] Endpoint error:', error);
-      return res.status(500).json({ error: `Server error: ${error.message}` });
     }
+    res.status(201).json({ message: 'Recyclable stored' });
+  } catch (error) {
+    console.error('Recyclables error:', error.message);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
+});
 
-  // Handle /api/control
-  if (path === '/api/control') {
-    const { device_id, user_id } = req.method === 'GET' ? req.query : req.body;
-
-    // Validate device_id and user_id
-    if (!device_id || !user_id) {
-      console.log('[Control] Missing device_id or user_id:', { device_id, user_id });
-      return res.status(400).json({ error: 'Missing device_id or user_id' });
+app.post('/api/insert-recyclables', async (req, res) => {
+  const { user_id, bottle_quantity, can_quantity, points_earned, money_earned } = req.body;
+  console.log('POST /api/insert-recyclables:', { user_id, bottle_quantity, can_quantity });
+  try {
+    if (!supabase) throw new Error('Supabase not initialized');
+    if (!user_id || (!bottle_quantity && !can_quantity)) {
+      return res.status(400).json({ message: 'Missing required fields' });
     }
-
-    try {
-      if (req.method === 'POST') {
-        const { command, session_id } = req.body;
-
-        if (!command) {
-          console.log('[Control] Missing command:', req.body);
-          return res.status(400).json({ error: 'Missing command' });
-        }
-
-        // Upsert device control
-        const { error: upsertError } = await supabase
-          .from('device_control')
-          .upsert(
-            [
-              {
-                device_id,
-                user_id,
-                command,
-                session_id: session_id || null,
-                updated_at: new Date().toISOString(),
-              },
-            ],
-            {
-              onConflict: ['device_id', 'user_id'],
-              returning: 'minimal', // Optimize performance
-            }
-          );
-
-        if (upsertError) {
-          console.error('[Control] Supabase upsert error:', upsertError);
-          throw new Error(`Failed to save command: ${upsertError.message}`);
-        }
-
-        console.log('[Control] Command saved:', { device_id, user_id, command, session_id });
-        return res.status(201).json({ message: 'Command saved' });
-      }
-
-      if (req.method === 'GET') {
-        const { data, error } = await supabase
-          .from('device_control')
-          .select('command, user_id, session_id')
-          .eq('device_id', device_id)
-          .eq('user_id', user_id)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle(); // Handles no rows gracefully
-
-        if (error) {
-          console.error('[Control] Supabase select error:', error);
-          throw new Error(`Failed to fetch command: ${error.message}`);
-        }
-
-        const response = {
-          command: data?.command || 'unknown',
-          user_id: data?.user_id || user_id,
-          session_id: data?.session_id || null,
-        };
-        console.log('[Control] GET response:', response);
-        return res.status(200).json(response);
-      }
-
-      console.log('[Control] Method not allowed:', req.method);
-      return res.status(405).json({ error: 'Method not allowed' });
-    } catch (error) {
-      console.error('[Control] Endpoint error:', error);
-      return res.status(500).json({ error: `Server error: ${error.message}` });
-    }
+    const { error } = await supabase
+      .from('recycling_sessions')
+      .insert([
+        {
+          user_id,
+          bottle_quantity,
+          can_quantity,
+          points_earned,
+          money_earned,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    if (error) throw error;
+    res.status(201).json({ message: 'Session recorded' });
+  } catch (error) {
+    console.error('Insert recyclables error:', error.message);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
+});
 
-  // Fallback for unknown routes
-  console.log('[Fallback] Route not found:', path);
-  return res.status(404).json({ error: 'Endpoint not found' });
-}
+app.use((req, res) => {
+  console.log('Not found:', req.method, req.url);
+  res.status(404).json({ message: 'Not found' });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Server error:', err.message, err.stack);
+  res.status(500).json({ message: 'Server error', error: err.message });
+});
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`Backend running on port ${port}`);
+});
+
+export default app;
