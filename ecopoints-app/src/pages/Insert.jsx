@@ -58,15 +58,13 @@ const Insert = () => {
     // Setup Pusher with retry logic
     const pusher = new Pusher('0b19c0609da3c9a06820', {
       cluster: 'ap2',
-      encrypted: true,
+      forceTLS: true, // Enforce secure WebSocket (wss://)
       logToConsole: true,
-      wsHost: 'ws-ap2.pusher.com',
-      httpHost: 'sockjs-ap2.pusher.com',
       disableStats: true,
-      pongTimeout: 15000, // Increased timeout
-      unavailableTimeout: 15000, // Increased timeout
-      enabledTransports: ['ws'], // Force WebSocket transport
-      disabledTransports: ['xhr_streaming', 'xhr_polling', 'sockjs'], // Disable fallback transports
+      pongTimeout: 15000,
+      unavailableTimeout: 15000,
+      enabledTransports: ['ws'],
+      disabledTransports: ['xhr_streaming', 'xhr_polling', 'sockjs'],
     });
 
     let retryCount = 0;
@@ -101,6 +99,7 @@ const Insert = () => {
 
       pusher.connection.bind('error', (error) => {
         console.error('[Insert.jsx] Pusher connection error:', error);
+        console.error('[Insert.jsx] Error details:', JSON.stringify(error, null, 2));
         setPusherStatus(`Connection Error (Retry ${retryCount + 1}/${maxRetries})`);
         retryCount++;
         if (retryCount < maxRetries) {
