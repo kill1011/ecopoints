@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faPlay, faStop, faHistory, faList, faCheck, faBottleWater, faBeer } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faPlay, faStop, faHistory, faList, faCheck, faBottleWater, faBeer, faSignal } from '@fortawesome/free-solid-svg-icons';
 import Pusher from 'pusher-js';
 import { createClient } from '@supabase/supabase-js';
 import '../styles/Insert.css';
@@ -31,6 +31,7 @@ const Insert = () => {
   const [lastDetection, setLastDetection] = useState(null);
   const [recentDetections, setRecentDetections] = useState([]);
   const [useFallback, setUseFallback] = useState(false);
+  const [pusherStatus, setPusherStatus] = useState('Connecting...');
 
   // Initialize Pusher and fetch past sessions
   useEffect(() => {
@@ -62,8 +63,10 @@ const Insert = () => {
       wsHost: 'ws-ap2.pusher.com',
       httpHost: 'sockjs-ap2.pusher.com',
       disableStats: true,
-      pongTimeout: 10000,
-      unavailableTimeout: 10000,
+      pongTimeout: 15000, // Increased timeout
+      unavailableTimeout: 15000, // Increased timeout
+      enabledTransports: ['ws'], // Force WebSocket transport
+      disabledTransports: ['xhr_streaming', 'xhr_polling', 'sockjs'], // Disable fallback transports
     });
 
     let retryCount = 0;
@@ -74,6 +77,7 @@ const Insert = () => {
 
       pusher.connection.bind('connected', () => {
         console.log('[Insert.jsx] Pusher connected successfully');
+        setPusherStatus('Connected');
         retryCount = 0;
         setUseFallback(false);
 
@@ -91,11 +95,13 @@ const Insert = () => {
 
         channel.bind('pusher:subscription_error', (error) => {
           console.error('[Insert.jsx] Subscription error:', error);
+          setPusherStatus('Subscription Failed');
         });
       });
 
       pusher.connection.bind('error', (error) => {
         console.error('[Insert.jsx] Pusher connection error:', error);
+        setPusherStatus(`Connection Error (Retry ${retryCount + 1}/${maxRetries})`);
         retryCount++;
         if (retryCount < maxRetries) {
           console.log(`[Insert.jsx] Retrying Pusher connection (${retryCount}/${maxRetries})...`);
@@ -103,12 +109,14 @@ const Insert = () => {
         } else {
           console.error('[Insert.jsx] Max retries reached. Switching to fallback mode.');
           setAlert({ type: 'warning', message: 'Real-time updates unavailable. Using fallback mode.' });
+          setPusherStatus('Disconnected');
           setUseFallback(true);
         }
       });
 
       pusher.connection.bind('unavailable', () => {
         console.warn('[Insert.jsx] Pusher connection unavailable');
+        setPusherStatus('Unavailable');
       });
     };
 
@@ -117,6 +125,7 @@ const Insert = () => {
     return () => {
       console.log('[Insert.jsx] Unmounting component');
       pusher.disconnect();
+      setPusherStatus('Disconnected');
     };
   }, [userData.id]);
 
@@ -378,6 +387,12 @@ const Insert = () => {
     return material === 'Plastic Bottle' ? '#3498db' : material === 'Can' ? '#e74c3c' : '#2ecc71';
   };
 
+  const getPusherStatusColor = () => {
+    if (pusherStatus === 'Connected') return '#2ecc71';
+    if (pusherStatus === 'Disconnected' || pusherStatus.includes('Error')) return '#e74c3c';
+    return '#f39c12';
+  };
+
   return (
     <Layout title="Insert Recyclables">
       <div className="insert-container">
@@ -471,6 +486,15 @@ CREATE POLICY "Allow users to manage device control" ON device_control
                 <FontAwesomeIcon icon={faRecycle} /> Sensor Status
               </div>
               <div className="stat-value">{systemStatus}</div>
+            </div>
+
+            <div className="status-card">
+              <div className="stat-label">
+                <FontAwesomeIcon icon={faSignal} /> Pusher Status
+              </div>
+              <div className="stat-value" style={{ color: getPusherStatusColor() }}>
+                {pusherStatus}
+              </div>
             </div>
 
             <div className="control-card">
