@@ -12,7 +12,6 @@ const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const Insert = () => {
-  // State variables
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [userData] = useState({
     name: user.name || 'Guest',
@@ -33,11 +32,9 @@ const Insert = () => {
   const [useFallback, setUseFallback] = useState(false);
   const [pusherStatus, setPusherStatus] = useState('Connecting...');
 
-  // Initialize Pusher and fetch past sessions
   useEffect(() => {
     console.log('[Insert.jsx] Mounting component');
 
-    // Check database schema
     const refreshSchema = async () => {
       try {
         await Promise.all([
@@ -55,10 +52,10 @@ const Insert = () => {
     refreshSchema();
     fetchSessions();
 
-    // Setup Pusher with retry logic
+    // Setup Pusher with initial connection check
     const pusher = new Pusher('0b19c0609da3c9a06820', {
-      cluster: 'ap2',
-      forceTLS: true, // Enforce secure WebSocket (wss://)
+      cluster: 'ap1',
+      forceTLS: true,
       logToConsole: true,
       disableStats: true,
       pongTimeout: 15000,
@@ -110,6 +107,8 @@ const Insert = () => {
           setAlert({ type: 'warning', message: 'Real-time updates unavailable. Using fallback mode.' });
           setPusherStatus('Disconnected');
           setUseFallback(true);
+          // Start immediate polling as a fallback
+          startFallbackPolling();
         }
       });
 
@@ -117,6 +116,39 @@ const Insert = () => {
         console.warn('[Insert.jsx] Pusher connection unavailable');
         setPusherStatus('Unavailable');
       });
+    };
+
+    // Immediate polling if Pusher fails
+    const startFallbackPolling = () => {
+      if (isSensing && currentSessionId && userData.id) {
+        fetchLatestDetection();
+      }
+    };
+
+    const fetchLatestDetection = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('session_detections')
+          .select('material, quantity, created_at')
+          .eq('session_id', currentSessionId)
+          .eq('user_id', userData.id)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (error) throw error;
+        if (data && data.length > 0) {
+          const detection = data[0];
+          handleNewDetection({
+            material: detection.material,
+            quantity: detection.quantity,
+            device_id: 'esp32-cam-1',
+            user_id: userData.id,
+            session_id: currentSessionId,
+            timestamp: detection.created_at,
+          });
+        }
+      } catch (error) {
+        console.error('[Insert.jsx] Immediate polling error:', error);
+      }
     };
 
     connectPusher();
@@ -164,7 +196,6 @@ const Insert = () => {
     };
   }, [useFallback, isSensing, currentSessionId, userData.id]);
 
-  // Handle new detections
   const handleNewDetection = async (data) => {
     if (!isSensing) return;
 
@@ -210,7 +241,6 @@ const Insert = () => {
     }
   };
 
-  // Fetch past sessions
   const fetchSessions = async () => {
     if (!userData.id) {
       setAlert({ type: 'error', message: 'Please log in.' });
@@ -232,7 +262,6 @@ const Insert = () => {
     }
   };
 
-  // Start sensing (UI-only toggle)
   const startSensing = async () => {
     if (isSensing || isLoading || dbError || !userData.id) {
       setAlert({ type: 'error', message: userData.id ? 'Invalid state' : 'Please log in.' });
@@ -272,7 +301,6 @@ const Insert = () => {
     }
   };
 
-  // Stop sensing (UI-only toggle)
   const stopSensing = async (shouldSave = false) => {
     if (!isSensing || isLoading || dbError || !userData.id || !currentSessionId) {
       console.log('[Insert.jsx] Stop skipped:', { isSensing, isLoading, dbError, userId: userData.id, sessionId: currentSessionId });
@@ -373,11 +401,9 @@ const Insert = () => {
     }
   };
 
-  // Handlers
   const stopSensingHandler = async () => await stopSensing(false);
   const doneInserting = async () => await stopSensing(true);
 
-  // UI helpers
   const getMaterialIcon = (material) => {
     return material === 'Plastic Bottle' ? faBottleWater : material === 'Can' ? faBeer : faRecycle;
   };
