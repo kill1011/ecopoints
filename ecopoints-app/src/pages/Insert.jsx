@@ -80,6 +80,7 @@ const Insert = () => {
   useEffect(() => {
     if (!currentSessionId || !isSensing) {
       console.log('[Insert.jsx] Skipping session_detections subscription: session_id or isSensing missing');
+      setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 }); // Reset counts when not sensing
       return;
     }
 
@@ -143,6 +144,7 @@ const Insert = () => {
     return () => {
       console.log('[Insert.jsx] Unsubscribing from session_detections');
       supabase.removeChannel(detectionSubscription);
+      setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 }); // Reset counts on cleanup
     };
   }, [currentSessionId, isSensing]);
 
@@ -250,7 +252,7 @@ const Insert = () => {
       setLiveCounts((prev) => {
         const updatedCounts = { ...prev };
         if (updatedCounts.hasOwnProperty(newDetection.material)) {
-          updatedCounts[newDetection.material] += newDetection.quantity;
+          updatedCounts[newDetection.material] = (updatedCounts[newDetection.material] || 0) + newDetection.quantity;
           console.log('[Insert.jsx] Updated live counts:', updatedCounts);
           return updatedCounts;
         } else {
@@ -348,14 +350,14 @@ const Insert = () => {
     }
   };
 
-  // Stop sensing session (used by both Stop Sensing and Done Inserting)
-  const stopSensing = async () => {
+  // Stop sensing session (modified to handle save or discard)
+  const stopSensing = async (shouldSave = false) => {
     if (!isSensing || isLoading || dbError || !userData.id || !currentSessionId) {
       console.log('[Insert.jsx] Stop skipped - invalid state:', { isSensing, isLoading, dbError, userId: userData.id, sessionId: currentSessionId });
       return;
     }
     setIsLoading(true);
-    console.log('[Insert.jsx] Sending stop command');
+    console.log('[Insert.jsx] Sending stop command, shouldSave:', shouldSave);
 
     try {
       // Update device_control to stop sensing
@@ -404,63 +406,76 @@ const Insert = () => {
         }
       });
 
-      // Insert aggregated counts into recyclables table
-      const materialsToInsert = [];
-      if (bottleCount > 0) {
-        materialsToInsert.push({
-          device_id: 'esp32-cam-1',
-          user_id: userData.id,
-          material: 'Plastic Bottle',
-          quantity: bottleCount,
-          created_at: new Date().toISOString(),
+      // Only save to recyclables if shouldSave is true (i.e., "Done Inserting")
+      if (shouldSave) {
+        // Insert aggregated counts into recyclables table
+        const materialsToInsert = [];
+        if (bottleCount > 0) {
+          materialsToInsert.push({
+            device_id: 'esp32-cam-1',
+            user_id: userData.id,
+            material: 'Plastic Bottle',
+            quantity: bottleCount,
+            created_at: new Date().toISOString(),
+          });
+        }
+        if (canCount > 0) {
+          materialsToInsert.push({
+            device_id: 'esp32-cam-1',
+            user_id: userData.id,
+            material: 'Can',
+            quantity: canCount,
+            created_at: new Date().toISOString(),
+          });
+        }
+
+        if (materialsToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from('recyclables')
+            .insert(materialsToInsert);
+
+          if (insertError) throw insertError;
+        }
+
+        // Calculate points and money
+        const pointsPerItem = 10;
+        const moneyPerItem = 0.05;
+        const pointsEarned = (bottleCount + canCount) * pointsPerItem;
+        const moneyVal = (bottleCount + canCount) * moneyPerItem;
+
+        // Update recycling_sessions with session data
+        const { error: updateError } = await supabase
+          .from('recycling_sessions')
+          .update({
+            bottle_count: bottleCount,
+            can_count: canCount,
+            points_earned: pointsEarned,
+            money_val: moneyVal,
+          })
+          .eq('id', currentSessionId);
+
+        if (updateError) throw updateError;
+
+        // Update user points
+        const { error: userError } = await supabase
+          .from('users')
+          .update({ points: userData.points + pointsEarned })
+          .eq('id', userData.id);
+
+        if (userError) throw userError;
+
+        setAlert({
+          type: 'success',
+          message: `Session ended. Earned ${pointsEarned} points ($${moneyVal.toFixed(2)}).`,
+        });
+      } else {
+        setAlert({
+          type: 'info',
+          message: 'Session stopped. Detections discarded.',
         });
       }
-      if (canCount > 0) {
-        materialsToInsert.push({
-          device_id: 'esp32-cam-1',
-          user_id: userData.id,
-          material: 'Can',
-          quantity: canCount,
-          created_at: new Date().toISOString(),
-        });
-      }
 
-      if (materialsToInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from('recyclables')
-          .insert(materialsToInsert);
-
-        if (insertError) throw insertError;
-      }
-
-      // Calculate points and money
-      const pointsPerItem = 10;
-      const moneyPerItem = 0.05;
-      const pointsEarned = (bottleCount + canCount) * pointsPerItem;
-      const moneyVal = (bottleCount + canCount) * moneyPerItem;
-
-      // Update recycling_sessions with session data
-      const { error: updateError } = await supabase
-        .from('recycling_sessions')
-        .update({
-          bottle_count: bottleCount,
-          can_count: canCount,
-          points_earned: pointsEarned,
-          money_val: moneyVal,
-        })
-        .eq('id', currentSessionId);
-
-      if (updateError) throw updateError;
-
-      // Update user points
-      const { error: userError } = await supabase
-        .from('users')
-        .update({ points: userData.points + pointsEarned })
-        .eq('id', userData.id);
-
-      if (userError) throw userError;
-
-      // Clear session_detections for this session
+      // Always clear session_detections for this session
       const { error: clearError } = await supabase
         .from('session_detections')
         .delete()
@@ -469,20 +484,19 @@ const Insert = () => {
 
       if (clearError) throw clearError;
 
-      await fetchSessions();
+      // Fetch updated sessions if saved
+      if (shouldSave) {
+        await fetchSessions();
+      }
 
       setIsSensing(false);
       setSystemStatus('Idle');
       setCurrentSessionId(null);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
-      setAlert({
-        type: 'success',
-        message: `Session ended. Earned ${pointsEarned} points ($${moneyVal.toFixed(2)}).`,
-      });
     } catch (error) {
       console.error('[Insert.jsx] Stop error:', error);
       setAlert({
-        type: 'error',
+        type: "error",
         message: `Stop failed: ${error.message}`,
       });
     } finally {
@@ -490,9 +504,14 @@ const Insert = () => {
     }
   };
 
-  // Done Inserting button handler
+  // Stop Sensing button handler (discard detections)
+  const stopSensingHandler = async () => {
+    await stopSensing(false);
+  };
+
+  // Done Inserting button handler (save detections)
   const doneInserting = async () => {
-    await stopSensing();
+    await stopSensing(true);
   };
 
   return (
@@ -599,7 +618,7 @@ CREATE POLICY "Allow users to manage their session detections"
               <button
                 type="button"
                 className="control-btn stop-btn"
-                onClick={stopSensing}
+                onClick={stopSensingHandler}
                 disabled={!isSensing || isLoading || dbError}
               >
                 <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
