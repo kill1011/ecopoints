@@ -54,7 +54,7 @@ const Insert = () => {
 
     // Setup Pusher with initial connection check
     const pusher = new Pusher('0b19c0609da3c9a06820', {
-      cluster: 'ap1',
+      cluster: 'ap1', // Updated to correct cluster
       forceTLS: true,
       logToConsole: true,
       disableStats: true,
@@ -107,7 +107,6 @@ const Insert = () => {
           setAlert({ type: 'warning', message: 'Real-time updates unavailable. Using fallback mode.' });
           setPusherStatus('Disconnected');
           setUseFallback(true);
-          // Start immediate polling as a fallback
           startFallbackPolling();
         }
       });
@@ -118,7 +117,6 @@ const Insert = () => {
       });
     };
 
-    // Immediate polling if Pusher fails
     const startFallbackPolling = () => {
       if (isSensing && currentSessionId && userData.id) {
         fetchLatestDetection();
@@ -160,7 +158,6 @@ const Insert = () => {
     };
   }, [userData.id]);
 
-  // Fallback polling with Supabase
   useEffect(() => {
     let pollInterval;
     if (useFallback && isSensing && currentSessionId && userData.id) {
