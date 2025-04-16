@@ -11,12 +11,6 @@ const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Pusher setup with provided credentials
-const pusher = new Pusher('0b19c0609da3c9a06820', {
-  cluster: 'ap2', // Verify in Pusher Dashboard
-  encrypted: true,
-});
-
 const Insert = () => {
   // State variables
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -36,29 +30,11 @@ const Insert = () => {
   const [sessionInitiated, setSessionInitiated] = useState(false);
   const [lastDetection, setLastDetection] = useState(null);
   const [recentDetections, setRecentDetections] = useState([]);
-  const [backendStatus, setBackendStatus] = useState('Checking...');
+  const [useFallback, setUseFallback] = useState(false);
 
-  // Backend API base URL
-  const API_BASE_URL = 'https://ecopoints-api.vercel.app/api';
-
-  // Initialize Pusher, check backend, and fetch past sessions
+  // Initialize Pusher and fetch past sessions
   useEffect(() => {
     console.log('[Insert.jsx] Mounting component');
-
-    // Check backend health
-    const checkBackendHealth = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/health`);
-        if (!response.ok) throw new Error('Backend health check failed');
-        const data = await response.json();
-        setBackendStatus(data.status);
-        console.log('[Insert.jsx] Backend health:', data);
-      } catch (error) {
-        console.error('[Insert.jsx] Backend health error:', error);
-        setBackendStatus('Offline');
-        setAlert({ type: 'error', message: 'Backend is offline. Please try again later.' });
-      }
-    };
 
     // Check database schema
     const refreshSchema = async () => {
@@ -75,63 +51,121 @@ const Insert = () => {
       }
     };
 
-    // Reset device control
-    const resetDeviceStatus = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/control`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: 'esp32-cam-1',
-            command: 'stop',
-            user_id: userData.id || 'default-uuid',
-          }),
-        });
-        if (!response.ok) throw new Error(`Failed to reset device: ${response.statusText}`);
-        console.log('[Insert.jsx] Device reset to stop');
-        setIsSensing(false);
-        setSystemStatus('Idle');
-      } catch (error) {
-        console.error('[Insert.jsx] Reset error:', error);
-        setAlert({ type: 'error', message: `Reset failed: ${error.message}` });
-      }
-    };
-
-    checkBackendHealth();
     refreshSchema();
-    resetDeviceStatus();
     fetchSessions();
 
-    // Setup Pusher
-    const channel = pusher.subscribe('detections');
-    channel.bind('new-detection', (data) => {
-      console.log('[Insert.jsx] Pusher detection:', data);
-      if (data.device_id === 'esp32-cam-1' && data.user_id === userData.id) {
-        handleNewDetection(data);
-      }
+    // Setup Pusher with retry logic
+    const pusher = new Pusher('0b19c0609da3c9a06820', {
+      cluster: 'ap2',
+      encrypted: true,
+      logToConsole: true,
+      wsHost: 'ws-ap2.pusher.com',
+      httpHost: 'sockjs-ap2.pusher.com',
+      disableStats: true,
+      pongTimeout: 10000,
+      unavailableTimeout: 10000,
     });
 
-    // Log Pusher connection errors
-    pusher.connection.bind('error', (error) => {
-      console.error('[Insert.jsx] Pusher connection error:', error);
-      setAlert({ type: 'error', message: 'Failed to connect to real-time updates. Refresh the page.' });
-    });
+    let retryCount = 0;
+    const maxRetries = 3;
+
+    const connectPusher = () => {
+      pusher.connect();
+
+      pusher.connection.bind('connected', () => {
+        console.log('[Insert.jsx] Pusher connected successfully');
+        retryCount = 0;
+        setUseFallback(false);
+
+        const channel = pusher.subscribe('detections');
+        channel.bind('new-detection', (data) => {
+          console.log('[Insert.jsx] Pusher detection:', data);
+          if (data.device_id === 'esp32-cam-1' && data.user_id === userData.id) {
+            handleNewDetection(data);
+          }
+        });
+
+        channel.bind('pusher:subscription_succeeded', () => {
+          console.log('[Insert.jsx] Subscribed to detections channel');
+        });
+
+        channel.bind('pusher:subscription_error', (error) => {
+          console.error('[Insert.jsx] Subscription error:', error);
+        });
+      });
+
+      pusher.connection.bind('error', (error) => {
+        console.error('[Insert.jsx] Pusher connection error:', error);
+        retryCount++;
+        if (retryCount < maxRetries) {
+          console.log(`[Insert.jsx] Retrying Pusher connection (${retryCount}/${maxRetries})...`);
+          setTimeout(connectPusher, 5000);
+        } else {
+          console.error('[Insert.jsx] Max retries reached. Switching to fallback mode.');
+          setAlert({ type: 'warning', message: 'Real-time updates unavailable. Using fallback mode.' });
+          setUseFallback(true);
+        }
+      });
+
+      pusher.connection.bind('unavailable', () => {
+        console.warn('[Insert.jsx] Pusher connection unavailable');
+      });
+    };
+
+    connectPusher();
 
     return () => {
       console.log('[Insert.jsx] Unmounting component');
-      pusher.unsubscribe('detections');
+      pusher.disconnect();
     };
   }, [userData.id]);
 
-  // Handle new detections from Pusher
+  // Fallback polling with Supabase
+  useEffect(() => {
+    let pollInterval;
+    if (useFallback && isSensing && currentSessionId && userData.id) {
+      pollInterval = setInterval(async () => {
+        try {
+          const { data, error } = await supabase
+            .from('session_detections')
+            .select('material, quantity, created_at')
+            .eq('session_id', currentSessionId)
+            .eq('user_id', userData.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+          if (error) throw error;
+          if (data && data.length > 0) {
+            const detection = data[0];
+            handleNewDetection({
+              material: detection.material,
+              quantity: detection.quantity,
+              device_id: 'esp32-cam-1',
+              user_id: userData.id,
+              session_id: currentSessionId,
+              timestamp: detection.created_at,
+            });
+          }
+        } catch (error) {
+          console.error('[Insert.jsx] Fallback polling error:', error);
+        }
+      }, 5000);
+    }
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [useFallback, isSensing, currentSessionId, userData.id]);
+
+  // Handle new detections
   const handleNewDetection = async (data) => {
+    if (!isSensing) return;
+
     const { material, quantity } = data;
     if (!['Plastic Bottle', 'Can'].includes(material)) {
       console.warn('[Insert.jsx] Invalid material:', material);
       return;
     }
 
-    // Save to Supabase
     try {
       const { error } = await supabase.from('session_detections').insert([
         {
@@ -144,7 +178,6 @@ const Insert = () => {
       ]);
       if (error) throw error;
 
-      // Update UI
       setLiveCounts((prev) => ({
         ...prev,
         [material]: (prev[material] || 0) + quantity,
@@ -191,7 +224,7 @@ const Insert = () => {
     }
   };
 
-  // Start sensing
+  // Start sensing (UI-only toggle)
   const startSensing = async () => {
     if (isSensing || isLoading || dbError || !userData.id) {
       setAlert({ type: 'error', message: userData.id ? 'Invalid state' : 'Please log in.' });
@@ -199,7 +232,6 @@ const Insert = () => {
     }
     setIsLoading(true);
     try {
-      // Create session
       const { data: sessionData, error: sessionError } = await supabase
         .from('recycling_sessions')
         .insert([
@@ -217,26 +249,12 @@ const Insert = () => {
       if (sessionError) throw sessionError;
 
       setCurrentSessionId(sessionData.id);
-
-      // Send start command
-      const response = await fetch(`${API_BASE_URL}/control`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: 'esp32-cam-1',
-          command: 'start',
-          user_id: userData.id,
-          session_id: sessionData.id,
-        }),
-      });
-      if (!response.ok) throw new Error(`Failed to start sensing: ${response.statusText}`);
-
       setIsSensing(true);
       setSystemStatus('Scanning...');
       setSessionInitiated(true);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setRecentDetections([]);
-      setAlert({ type: 'success', message: 'Sensor started' });
+      setAlert({ type: 'success', message: 'Started receiving detections' });
       console.log('[Insert.jsx] Start successful, session_id:', sessionData.id);
     } catch (error) {
       console.error('[Insert.jsx] Start error:', error);
@@ -246,7 +264,7 @@ const Insert = () => {
     }
   };
 
-  // Stop sensing
+  // Stop sensing (UI-only toggle)
   const stopSensing = async (shouldSave = false) => {
     if (!isSensing || isLoading || dbError || !userData.id || !currentSessionId) {
       console.log('[Insert.jsx] Stop skipped:', { isSensing, isLoading, dbError, userId: userData.id, sessionId: currentSessionId });
@@ -254,20 +272,6 @@ const Insert = () => {
     }
     setIsLoading(true);
     try {
-      // Send stop command
-      const response = await fetch(`${API_BASE_URL}/control`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: 'esp32-cam-1',
-          command: 'stop',
-          user_id: userData.id,
-          session_id: currentSessionId,
-        }),
-      });
-      if (!response.ok) throw new Error(`Failed to stop sensing: ${response.statusText}`);
-
-      // Fetch detections
       const { data: sessionDetections, error: detectionError } = await supabase
         .from('session_detections')
         .select('material, quantity')
@@ -283,7 +287,6 @@ const Insert = () => {
       });
 
       if (shouldSave) {
-        // Save to recyclables
         const materialsToInsert = [];
         if (bottleCount > 0) {
           materialsToInsert.push({
@@ -308,7 +311,6 @@ const Insert = () => {
           if (insertError) throw insertError;
         }
 
-        // Update session
         const pointsPerItem = 10;
         const moneyPerItem = 0.05;
         const pointsEarned = (bottleCount + canCount) * pointsPerItem;
@@ -325,7 +327,6 @@ const Insert = () => {
           .eq('id', currentSessionId);
         if (updateError) throw updateError;
 
-        // Update user points
         const { error: userError } = await supabase
           .from('users')
           .update({ points: userData.points + pointsEarned })
@@ -340,7 +341,6 @@ const Insert = () => {
         setAlert({ type: 'info', message: 'Session stopped. Detections discarded.' });
       }
 
-      // Clear session detections
       const { error: clearError } = await supabase
         .from('session_detections')
         .delete()
@@ -385,9 +385,6 @@ const Insert = () => {
           <h1>
             <FontAwesomeIcon icon={faRecycle} /> Insert Recyclables
           </h1>
-          <div className="backend-status">
-            Backend Status: <span className={backendStatus === 'OK' ? 'status-ok' : 'status-error'}>{backendStatus}</span>
-          </div>
         </div>
 
         {alert.message && (
@@ -482,7 +479,7 @@ CREATE POLICY "Allow users to manage device control" ON device_control
                   type="button"
                   className="control-btn start-btn"
                   onClick={startSensing}
-                  disabled={isSensing || isLoading || dbError || backendStatus !== 'OK'}
+                  disabled={isSensing || isLoading || dbError}
                 >
                   {isLoading && <span className="loading-spinner"></span>}
                   <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
@@ -491,7 +488,7 @@ CREATE POLICY "Allow users to manage device control" ON device_control
                   type="button"
                   className="control-btn stop-btn"
                   onClick={stopSensingHandler}
-                  disabled={!isSensing || isLoading || dbError || backendStatus !== 'OK'}
+                  disabled={!isSensing || isLoading || dbError}
                 >
                   {isLoading && <span className="loading-spinner"></span>}
                   <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
@@ -500,7 +497,7 @@ CREATE POLICY "Allow users to manage device control" ON device_control
                   type="button"
                   className="control-btn done-btn"
                   onClick={doneInserting}
-                  disabled={!isSensing || isLoading || dbError || backendStatus !== 'OK'}
+                  disabled={!isSensing || isLoading || dbError}
                 >
                   {isLoading && <span className="loading-spinner"></span>}
                   <FontAwesomeIcon icon={faCheck} /> {isLoading ? 'Finishing...' : 'Done Inserting'}
