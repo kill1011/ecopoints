@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import Layout from '../components/Layout';
+import Layout from '../components/Layout'; // Updated import path
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop, faHistory, faList, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { createClient } from '@supabase/supabase-js';
-import '../styles/Insert.css';
+import '../styles/Insert.css'; // Updated import path
 
 // Supabase client setup
 const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
@@ -26,8 +26,9 @@ const Insert = () => {
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [dbError, setDbError] = useState(false);
+  const [sessionInitiated, setSessionInitiated] = useState(false); // Track if the user initiated the session
 
-  // Initial setup: Check schema, device status, and fetch past sessions
+  // Initial setup: Check schema, reset device status, and fetch past sessions
   useEffect(() => {
     console.log('[Insert.jsx] Mounting component');
     const refreshSchema = async () => {
@@ -49,8 +50,36 @@ const Insert = () => {
       }
     };
 
+    const resetDeviceStatus = async () => {
+      try {
+        const newCommand = {
+          device_id: 'esp32-cam-1',
+          command: 'stop',
+          user_id: userData.id,
+          session_id: null,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error } = await supabase
+          .from('device_control')
+          .upsert([newCommand], { onConflict: 'device_id,user_id' });
+
+        if (error) throw error;
+
+        console.log('[Insert.jsx] Device status reset to stop');
+        setIsSensing(false);
+        setSystemStatus('Idle');
+      } catch (error) {
+        console.error('[Insert.jsx] Reset device status error:', error);
+        setAlert({
+          type: 'error',
+          message: `Failed to reset device status: ${error.message}`,
+        });
+      }
+    };
+
     refreshSchema();
-    checkDeviceStatus();
+    resetDeviceStatus();
     fetchSessions();
 
     // Subscribe to device_control changes
@@ -86,7 +115,6 @@ const Insert = () => {
 
     console.log('[Insert.jsx] Setting up session_detections subscription for session_id:', currentSessionId);
 
-    // Subscribe to new insertions in session_detections
     const detectionSubscription = supabase
       .channel('session_detections_changes')
       .on(
@@ -111,7 +139,6 @@ const Insert = () => {
         }
       });
 
-    // Fetch initial detections for the current session
     const fetchInitialDetections = async () => {
       try {
         const { data, error } = await supabase
@@ -153,47 +180,7 @@ const Insert = () => {
     console.log('[Insert.jsx] liveCounts updated:', liveCounts);
   }, [liveCounts]);
 
-  // Check the current device status from device_control table
-  const checkDeviceStatus = async () => {
-    console.log('[Insert.jsx] Checking device status');
-    try {
-      const { data, error } = await supabase
-        .from('device_control')
-        .select('command, updated_at')
-        .eq('device_id', 'esp32-cam-1')
-        .eq('user_id', userData.id)
-        .order('updated_at', { ascending: false })
-        .limit(1);
-
-      if (error) {
-        console.error('[Insert.jsx] Status check error:', error);
-        if (error.message.includes('does not exist')) {
-          setDbError(true);
-          throw new Error('Device control table missing.');
-        }
-        if (error.code === '500') {
-          setDbError(true);
-          throw new Error('Supabase server error. Please check your database configuration.');
-        }
-        throw error;
-      }
-
-      console.log('[Insert.jsx] Status data:', data);
-      if (data && data.length > 0) {
-        const isActive = data[0].command === 'start';
-        if (!isSensing) {
-          setIsSensing(isActive);
-          setSystemStatus(isActive ? 'Scanning...' : 'Idle');
-        }
-      }
-    } catch (error) {
-      console.error('[Insert.jsx] Status check error:', error);
-      setAlert({
-        type: 'error',
-        message: `Status check failed: ${error.message}`,
-      });
-    }
-  };
+  // Removed checkDeviceStatus since we reset the status on mount
 
   // Fetch past recycling sessions
   const fetchSessions = async () => {
@@ -233,43 +220,20 @@ const Insert = () => {
         if (prev && !isActive) {
           setSystemStatus('Idle');
           setAlert({ type: 'info', message: 'Sensor stopped externally' });
+          setSessionInitiated(false);
           return false;
         } else if (!prev && isActive) {
-          setSystemStatus('Scanning...');
-          setAlert({ type: 'info', message: 'Sensor started externally' });
-          return true;
+          // Only set to active if the session was initiated in this instance
+          if (sessionInitiated) {
+            setSystemStatus('Scanning...');
+            setAlert({ type: 'info', message: 'Sensor started' });
+            return true;
+          } else {
+            console.log('[Insert.jsx] Ignoring external start command - session not initiated by user');
+            return prev;
+          }
         }
         return prev;
-      });
-    }
-  };
-
-  // Handle new detections from session_detections
-  const handleNewDetection = (payload) => {
-    console.log('[Insert.jsx] Handling new detection:', payload);
-    const { new: newDetection } = payload;
-    if (newDetection.user_id === userData.id && newDetection.session_id === currentSessionId) {
-      setLiveCounts((prev) => {
-        const updatedCounts = { ...prev };
-        if (updatedCounts.hasOwnProperty(newDetection.material)) {
-          updatedCounts[newDetection.material] = (updatedCounts[newDetection.material] || 0) + newDetection.quantity;
-          console.log('[Insert.jsx] Updated live counts:', updatedCounts);
-          return updatedCounts;
-        } else {
-          console.log('[Insert.jsx] Material not recognized:', newDetection.material);
-          return prev;
-        }
-      });
-      setAlert({
-        type: 'success',
-        message: `Detected: ${newDetection.material} (${newDetection.quantity})`,
-      });
-    } else {
-      console.log('[Insert.jsx] Detection ignored - mismatch:', {
-        receivedUserId: newDetection.user_id,
-        expectedUserId: userData.id,
-        receivedSessionId: newDetection.session_id,
-        expectedSessionId: currentSessionId,
       });
     }
   };
@@ -322,20 +286,9 @@ const Insert = () => {
 
       if (error) throw error;
 
-      // Verify the command was set
-      const { data, error: fetchError } = await supabase
-        .from('device_control')
-        .select('command')
-        .eq('device_id', 'esp32-cam-1')
-        .eq('user_id', userData.id)
-        .order('updated_at', { ascending: false })
-        .limit(1);
-      if (fetchError || !data || data[0].command !== 'start') {
-        throw new Error('Failed to verify start command');
-      }
-
       setIsSensing(true);
       setSystemStatus('Scanning...');
+      setSessionInitiated(true); // Mark that the session was initiated by the user
       setAlert({ type: 'success', message: 'Sensor started' });
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 }); // Reset counts
       console.log('[Insert.jsx] Start successful - isSensing:', true, 'session_id:', sessionData.id);
@@ -374,18 +327,6 @@ const Insert = () => {
         .upsert([newCommand], { onConflict: 'device_id,user_id' });
 
       if (error) throw error;
-
-      // Verify the command was set
-      const { data, error: fetchError } = await supabase
-        .from('device_control')
-        .select('command')
-        .eq('device_id', 'esp32-cam-1')
-        .eq('user_id', userData.id)
-        .order('updated_at', { ascending: false })
-        .limit(1);
-      if (fetchError || !data || data[0].command !== 'stop') {
-        throw new Error('Failed to verify stop command');
-      }
 
       // Aggregate session detections
       const { data: sessionDetections, error: detectionError } = await supabase
@@ -493,10 +434,11 @@ const Insert = () => {
       setSystemStatus('Idle');
       setCurrentSessionId(null);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
+      setSessionInitiated(false); // Reset session initiation flag
     } catch (error) {
       console.error('[Insert.jsx] Stop error:', error);
       setAlert({
-        type: "error",
+        type: 'error',
         message: `Stop failed: ${error.message}`,
       });
     } finally {
@@ -512,6 +454,36 @@ const Insert = () => {
   // Done Inserting button handler (save detections)
   const doneInserting = async () => {
     await stopSensing(true);
+  };
+
+  // Handle new detections from session_detections
+  const handleNewDetection = (payload) => {
+    console.log('[Insert.jsx] Handling new detection:', payload);
+    const { new: newDetection } = payload;
+    if (newDetection.user_id === userData.id && newDetection.session_id === currentSessionId) {
+      setLiveCounts((prev) => {
+        const updatedCounts = { ...prev };
+        if (updatedCounts.hasOwnProperty(newDetection.material)) {
+          updatedCounts[newDetection.material] = (updatedCounts[newDetection.material] || 0) + newDetection.quantity;
+          console.log('[Insert.jsx] Updated live counts:', updatedCounts);
+          return updatedCounts;
+        } else {
+          console.log('[Insert.jsx] Material not recognized:', newDetection.material);
+          return prev;
+        }
+      });
+      setAlert({
+        type: 'success',
+        message: `Detected: ${newDetection.material} (${newDetection.quantity})`,
+      });
+    } else {
+      console.log('[Insert.jsx] Detection ignored - mismatch:', {
+        receivedUserId: newDetection.user_id,
+        expectedUserId: userData.id,
+        receivedSessionId: newDetection.session_id,
+        expectedSessionId: currentSessionId,
+      });
+    }
   };
 
   return (
