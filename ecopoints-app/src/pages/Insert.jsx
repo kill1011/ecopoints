@@ -11,6 +11,9 @@ const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Backend API URL (replace with your deployed Vercel URL)
+const backendApiUrl = "https://ecopoints-api.vercel.app";
+
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [userData] = useState({
@@ -54,7 +57,7 @@ const Insert = () => {
 
     // Setup Pusher with initial connection check
     const pusher = new Pusher('0b19c0609da3c9a06820', {
-      cluster: 'ap1', // Updated to correct cluster
+      cluster: 'ap1',
       forceTLS: true,
       logToConsole: true,
       disableStats: true,
@@ -193,12 +196,42 @@ const Insert = () => {
     };
   }, [useFallback, isSensing, currentSessionId, userData.id]);
 
+  const sendPusherCommand = async (command) => {
+    try {
+      const response = await fetch(backendApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel: 'commands',
+          event: 'device-command',
+          data: {
+            device_id: 'esp32-cam-1',
+            user_id: userData.id,
+            session_id: currentSessionId,
+            command: command,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to send command');
+      console.log('[Insert.jsx] Command sent successfully:', command);
+    } catch (error) {
+      console.error('[Insert.jsx] Error sending command:', error);
+      setAlert({ type: 'error', message: `Failed to send command: ${error.message}` });
+    }
+  };
+
   const handleNewDetection = async (data) => {
     if (!isSensing) return;
 
-    const { material, quantity } = data;
+    const { material, quantity, session_id } = data;
     if (!['Plastic Bottle', 'Can'].includes(material)) {
       console.warn('[Insert.jsx] Invalid material:', material);
+      return;
+    }
+    if (session_id !== currentSessionId) {
+      console.warn('[Insert.jsx] Detection for wrong session:', { received: session_id, expected: currentSessionId });
       return;
     }
 
@@ -288,6 +321,7 @@ const Insert = () => {
       setSessionInitiated(true);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setRecentDetections([]);
+      await sendPusherCommand('start-sensing');
       setAlert({ type: 'success', message: 'Started receiving detections' });
       console.log('[Insert.jsx] Start successful, session_id:', sessionData.id);
     } catch (error) {
@@ -305,6 +339,8 @@ const Insert = () => {
     }
     setIsLoading(true);
     try {
+      await sendPusherCommand('stop-sensing');
+
       const { data: sessionDetections, error: detectionError } = await supabase
         .from('session_detections')
         .select('material, quantity')
