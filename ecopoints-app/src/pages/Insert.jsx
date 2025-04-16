@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import Layout from '../components/Layout'; // Updated import path
+import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop, faHistory, faList, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { createClient } from '@supabase/supabase-js';
-import '../styles/Insert.css'; // Updated import path
+import '../styles/Insert.css';
 
 // Supabase client setup
 const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
@@ -105,7 +105,7 @@ const Insert = () => {
     };
   }, []);
 
-  // Real-time subscription to session_detections
+  // Real-time subscription to session_detections with polling fallback
   useEffect(() => {
     if (!currentSessionId || !isSensing) {
       console.log('[Insert.jsx] Skipping session_detections subscription: session_id or isSensing missing');
@@ -139,7 +139,7 @@ const Insert = () => {
         }
       });
 
-    const fetchInitialDetections = async () => {
+    const fetchDetections = async () => {
       try {
         const { data, error } = await supabase
           .from('session_detections')
@@ -149,6 +149,8 @@ const Insert = () => {
 
         if (error) throw error;
 
+        console.log('[Insert.jsx] Raw session_detections data:', data);
+
         const counts = { 'Plastic Bottle': 0, 'Can': 0 };
         data.forEach((detection) => {
           if (counts.hasOwnProperty(detection.material)) {
@@ -156,21 +158,30 @@ const Insert = () => {
           }
         });
         setLiveCounts(counts);
-        console.log('[Insert.jsx] Initial session detections:', counts);
+        console.log('[Insert.jsx] Fetched session detections:', counts);
       } catch (error) {
-        console.error('[Insert.jsx] Fetch initial session detections error:', error);
+        console.error('[Insert.jsx] Fetch session detections error:', error);
         setAlert({
           type: 'error',
-          message: `Failed to fetch initial detections: ${error.message}`,
+          message: `Failed to fetch detections: ${error.message}`,
         });
       }
     };
 
-    fetchInitialDetections();
+    // Initial fetch
+    fetchDetections();
+
+    // Polling every 5 seconds while isSensing is true
+    const pollingInterval = setInterval(() => {
+      if (isSensing) {
+        fetchDetections();
+      }
+    }, 5000);
 
     return () => {
       console.log('[Insert.jsx] Unsubscribing from session_detections');
       supabase.removeChannel(detectionSubscription);
+      clearInterval(pollingInterval);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 }); // Reset counts on cleanup
     };
   }, [currentSessionId, isSensing]);
@@ -179,8 +190,6 @@ const Insert = () => {
   useEffect(() => {
     console.log('[Insert.jsx] liveCounts updated:', liveCounts);
   }, [liveCounts]);
-
-  // Removed checkDeviceStatus since we reset the status on mount
 
   // Fetch past recycling sessions
   const fetchSessions = async () => {
@@ -223,7 +232,6 @@ const Insert = () => {
           setSessionInitiated(false);
           return false;
         } else if (!prev && isActive) {
-          // Only set to active if the session was initiated in this instance
           if (sessionInitiated) {
             setSystemStatus('Scanning...');
             setAlert({ type: 'info', message: 'Sensor started' });
@@ -238,6 +246,43 @@ const Insert = () => {
     }
   };
 
+  // Handle new detections from session_detections
+  const handleNewDetection = (payload) => {
+    console.log('[Insert.jsx] Handling new detection:', payload);
+    const { new: newDetection } = payload;
+
+    if (newDetection.session_id !== currentSessionId) {
+      console.log('[Insert.jsx] Session ID mismatch:', {
+        receivedSessionId: newDetection.session_id,
+        expectedSessionId: currentSessionId,
+      });
+      return;
+    }
+
+    if (newDetection.user_id !== userData.id) {
+      console.log('[Insert.jsx] User ID mismatch, but proceeding:', {
+        receivedUserId: newDetection.user_id,
+        expectedUserId: userData.id,
+      });
+    }
+
+    setLiveCounts((prev) => {
+      const updatedCounts = { ...prev };
+      if (updatedCounts.hasOwnProperty(newDetection.material)) {
+        updatedCounts[newDetection.material] = (updatedCounts[newDetection.material] || 0) + newDetection.quantity;
+        console.log('[Insert.jsx] Updated live counts:', updatedCounts);
+        return updatedCounts;
+      } else {
+        console.log('[Insert.jsx] Material not recognized:', newDetection.material);
+        return prev;
+      }
+    });
+    setAlert({
+      type: 'success',
+      message: `Detected: ${newDetection.material} (${newDetection.quantity})`,
+    });
+  };
+
   // Start sensing session
   const startSensing = async () => {
     if (isSensing || isLoading || dbError || !userData.id) {
@@ -250,7 +295,6 @@ const Insert = () => {
     console.log('[Insert.jsx] Sending start command');
 
     try {
-      // Create a new session in recycling_sessions
       const { data: sessionData, error: sessionError } = await supabase
         .from('recycling_sessions')
         .insert([
@@ -271,7 +315,6 @@ const Insert = () => {
       console.log('[Insert.jsx] New session created:', sessionData);
       setCurrentSessionId(sessionData.id);
 
-      // Update device_control to start sensing
       const newCommand = {
         device_id: 'esp32-cam-1',
         command: 'start',
@@ -288,9 +331,9 @@ const Insert = () => {
 
       setIsSensing(true);
       setSystemStatus('Scanning...');
-      setSessionInitiated(true); // Mark that the session was initiated by the user
+      setSessionInitiated(true);
       setAlert({ type: 'success', message: 'Sensor started' });
-      setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 }); // Reset counts
+      setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       console.log('[Insert.jsx] Start successful - isSensing:', true, 'session_id:', sessionData.id);
     } catch (error) {
       console.error('[Insert.jsx] Start error:', error);
@@ -303,7 +346,7 @@ const Insert = () => {
     }
   };
 
-  // Stop sensing session (modified to handle save or discard)
+  // Stop sensing session
   const stopSensing = async (shouldSave = false) => {
     if (!isSensing || isLoading || dbError || !userData.id || !currentSessionId) {
       console.log('[Insert.jsx] Stop skipped - invalid state:', { isSensing, isLoading, dbError, userId: userData.id, sessionId: currentSessionId });
@@ -313,7 +356,6 @@ const Insert = () => {
     console.log('[Insert.jsx] Sending stop command, shouldSave:', shouldSave);
 
     try {
-      // Update device_control to stop sensing
       const newCommand = {
         device_id: 'esp32-cam-1',
         command: 'stop',
@@ -328,7 +370,6 @@ const Insert = () => {
 
       if (error) throw error;
 
-      // Aggregate session detections
       const { data: sessionDetections, error: detectionError } = await supabase
         .from('session_detections')
         .select('material, quantity')
@@ -336,6 +377,8 @@ const Insert = () => {
         .eq('user_id', userData.id);
 
       if (detectionError) throw detectionError;
+
+      console.log('[Insert.jsx] Session detections at stop:', sessionDetections);
 
       let bottleCount = 0;
       let canCount = 0;
@@ -347,9 +390,9 @@ const Insert = () => {
         }
       });
 
-      // Only save to recyclables if shouldSave is true (i.e., "Done Inserting")
+      console.log('[Insert.jsx] Aggregated counts - Bottles:', bottleCount, 'Cans:', canCount);
+
       if (shouldSave) {
-        // Insert aggregated counts into recyclables table
         const materialsToInsert = [];
         if (bottleCount > 0) {
           materialsToInsert.push({
@@ -378,13 +421,11 @@ const Insert = () => {
           if (insertError) throw insertError;
         }
 
-        // Calculate points and money
         const pointsPerItem = 10;
         const moneyPerItem = 0.05;
         const pointsEarned = (bottleCount + canCount) * pointsPerItem;
         const moneyVal = (bottleCount + canCount) * moneyPerItem;
 
-        // Update recycling_sessions with session data
         const { error: updateError } = await supabase
           .from('recycling_sessions')
           .update({
@@ -397,7 +438,6 @@ const Insert = () => {
 
         if (updateError) throw updateError;
 
-        // Update user points
         const { error: userError } = await supabase
           .from('users')
           .update({ points: userData.points + pointsEarned })
@@ -416,7 +456,6 @@ const Insert = () => {
         });
       }
 
-      // Always clear session_detections for this session
       const { error: clearError } = await supabase
         .from('session_detections')
         .delete()
@@ -425,7 +464,6 @@ const Insert = () => {
 
       if (clearError) throw clearError;
 
-      // Fetch updated sessions if saved
       if (shouldSave) {
         await fetchSessions();
       }
@@ -434,7 +472,7 @@ const Insert = () => {
       setSystemStatus('Idle');
       setCurrentSessionId(null);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
-      setSessionInitiated(false); // Reset session initiation flag
+      setSessionInitiated(false);
     } catch (error) {
       console.error('[Insert.jsx] Stop error:', error);
       setAlert({
@@ -456,50 +494,27 @@ const Insert = () => {
     await stopSensing(true);
   };
 
-  // Handle new detections from session_detections
-  const handleNewDetection = (payload) => {
-    console.log('[Insert.jsx] Handling new detection:', payload);
-    const { new: newDetection } = payload;
-    if (newDetection.user_id === userData.id && newDetection.session_id === currentSessionId) {
-      setLiveCounts((prev) => {
-        const updatedCounts = { ...prev };
-        if (updatedCounts.hasOwnProperty(newDetection.material)) {
-          updatedCounts[newDetection.material] = (updatedCounts[newDetection.material] || 0) + newDetection.quantity;
-          console.log('[Insert.jsx] Updated live counts:', updatedCounts);
-          return updatedCounts;
-        } else {
-          console.log('[Insert.jsx] Material not recognized:', newDetection.material);
-          return prev;
-        }
-      });
-      setAlert({
-        type: 'success',
-        message: `Detected: ${newDetection.material} (${newDetection.quantity})`,
-      });
-    } else {
-      console.log('[Insert.jsx] Detection ignored - mismatch:', {
-        receivedUserId: newDetection.user_id,
-        expectedUserId: userData.id,
-        receivedSessionId: newDetection.session_id,
-        expectedSessionId: currentSessionId,
-      });
-    }
-  };
-
   return (
     <Layout title="Insert Recyclables">
-      {alert.message && (
-        <div className={`alert ${alert.type}`}>
-          {alert.message}
-          <button onClick={() => setAlert({ type: '', message: '' })}>×</button>
+      <div className="insert-container">
+        <div className="insert-header">
+          <h1>
+            <FontAwesomeIcon icon={faRecycle} /> Insert Recyclables
+          </h1>
         </div>
-      )}
 
-      {dbError && (
-        <div className="setup-instructions">
-          <h3>Database Setup Needed</h3>
-          <p>Run this SQL in Supabase SQL Editor to fix the schema:</p>
-          <pre>
+        {alert.message && (
+          <div className={`alert alert-${alert.type}`}>
+            {alert.message}
+            <button onClick={() => setAlert({ type: '', message: '' })}>×</button>
+          </div>
+        )}
+
+        {dbError && (
+          <div className="setup-instructions">
+            <h3>Database Setup Needed</h3>
+            <p>Run this SQL in Supabase SQL Editor to fix the schema:</p>
+            <pre>
 {`-- Add user_id and session_id to device_control
 ALTER TABLE public.device_control
 ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id),
@@ -555,105 +570,108 @@ CREATE POLICY "Allow users to manage their session detections"
   ON public.session_detections FOR ALL
   USING (auth.uid() = user_id);
 `}
-          </pre>
-          <button
-            className="control-btn start-btn"
-            onClick={() => window.location.reload()}
-          >
-            Reload After Setup
-          </button>
-        </div>
-      )}
-
-      {!dbError && (
-        <div className="insert-grid">
-          <div className="status-card">
-            <div className="stat-label">
-              <FontAwesomeIcon icon={faRecycle} /> Sensor Status
-            </div>
-            <div className="stat-value" style={{ color: isSensing ? '#4caf50' : '#666' }}>
-              {systemStatus}
-            </div>
+            </pre>
+            <button
+              className="control-btn start-btn"
+              onClick={() => window.location.reload()}
+            >
+              Reload After Setup
+            </button>
           </div>
+        )}
 
-          <div className="control-card">
-            <div className="button-group">
-              <button
-                type="button"
-                className="control-btn start-btn"
-                onClick={startSensing}
-                disabled={isSensing || isLoading || dbError}
-              >
-                <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
-              </button>
-
-              <button
-                type="button"
-                className="control-btn stop-btn"
-                onClick={stopSensingHandler}
-                disabled={!isSensing || isLoading || dbError}
-              >
-                <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
-              </button>
-
-              <button
-                type="button"
-                className="control-btn done-btn"
-                onClick={doneInserting}
-                disabled={!isSensing || isLoading || dbError}
-                style={{ backgroundColor: '#2196f3', marginLeft: '10px' }}
-              >
-                <FontAwesomeIcon icon={faCheck} /> {isLoading ? 'Finishing...' : 'Done Inserting'}
-              </button>
+        {!dbError && (
+          <div className="insert-grid">
+            <div className="status-card">
+              <div className="stat-label">
+                <FontAwesomeIcon icon={faRecycle} /> Sensor Status
+              </div>
+              <div className="stat-value">
+                {systemStatus}
+              </div>
             </div>
-          </div>
 
-          <div className="detections-card">
-            <div className="stat-label">
-              <FontAwesomeIcon icon={faHistory} /> Current Session Detections
+            <div className="control-card">
+              <div className="button-group">
+                <button
+                  type="button"
+                  className="control-btn start-btn"
+                  onClick={startSensing}
+                  disabled={isSensing || isLoading || dbError}
+                >
+                  {isLoading && <span className="loading-spinner"></span>}
+                  <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
+                </button>
+
+                <button
+                  type="button"
+                  className="control-btn stop-btn"
+                  onClick={stopSensingHandler}
+                  disabled={!isSensing || isLoading || dbError}
+                >
+                  {isLoading && <span className="loading-spinner"></span>}
+                  <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
+                </button>
+
+                <button
+                  type="button"
+                  className="control-btn done-btn"
+                  onClick={doneInserting}
+                  disabled={!isSensing || isLoading || dbError}
+                >
+                  {isLoading && <span className="loading-spinner"></span>}
+                  <FontAwesomeIcon icon={faCheck} /> {isLoading ? 'Finishing...' : 'Done Inserting'}
+                </button>
+              </div>
             </div>
-            {isSensing ? (
-              <ul className="detections-list">
-                {Object.entries(liveCounts).map(([material, count]) => (
-                  count > 0 && (
-                    <li key={material}>
-                      {material}: {count}
+
+            <div className="detections-card">
+              <div className="stat-label">
+                <FontAwesomeIcon icon={faHistory} /> Current Session Detections
+              </div>
+              {isSensing ? (
+                <ul className="detections-list">
+                  {Object.entries(liveCounts).map(([material, count]) => (
+                    count > 0 && (
+                      <li key={material}>
+                        {material}: {count}
+                      </li>
+                    )
+                  ))}
+                  {Object.values(liveCounts).every(count => count === 0) && (
+                    <p>Insert materials to see detections.</p>
+                  )}
+                </ul>
+              ) : (
+                <p>Click "Start Sensing" to begin.</p>
+              )}
+            </div>
+
+            <div className="sessions-card">
+              <div className="stat-label">
+                <FontAwesomeIcon icon={faList} /> Past Sessions
+              </div>
+              {sessions.length > 0 ? (
+                <ul className="sessions-list">
+                  {sessions.map((session) => (
+                    <li key={session.id}>
+                      Bottles: {session.bottle_count}, Cans: {session.can_count}, Points: {session.points_earned}, Value: ${session.money_val.toFixed(2)} -{' '}
+                      {new Date(session.created_at).toLocaleString()}
                     </li>
-                  )
-                ))}
-                {Object.values(liveCounts).every(count => count === 0) && (
-                  <p>Insert materials to see detections.</p>
-                )}
-              </ul>
-            ) : (
-              <p>Click "Start Sensing" to begin.</p>
-            )}
-          </div>
-
-          <div className="sessions-card">
-            <div className="stat-label">
-              <FontAwesomeIcon icon={faList} /> Past Sessions
+                  ))}
+                </ul>
+              ) : (
+                <p>No past sessions.</p>
+              )}
             </div>
-            {sessions.length > 0 ? (
-              <ul className="sessions-list">
-                {sessions.map((session) => (
-                  <li key={session.id}>
-                    Bottles: {session.bottle_count}, Cans: {session.can_count}, Points: {session.points_earned}, Value: ${session.money_val.toFixed(2)} -{' '}
-                    {new Date(session.created_at).toLocaleString()}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No past sessions.</p>
-            )}
-          </div>
 
-          <div className="preview-card">
-            <div className="stat-label">User: {userData.name}</div>
-            <div className="stat-value">Points: {userData.points}</div>
+            <div className="preview-card">
+              <div className="stat-label">User: {userData.name}</div>
+              <div className="stat-value">Points: {userData.points}</div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </Layout>
   );
 };
