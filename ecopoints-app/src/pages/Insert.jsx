@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faPlay, faStop, faHistory, faList } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faPlay, faStop, faHistory, faList, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { createClient } from '@supabase/supabase-js';
 import '../styles/Insert.css';
 
+// Supabase client setup
 const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const Insert = () => {
+  // State variables
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [userData] = useState({
     name: user.name || 'Guest',
@@ -20,21 +22,23 @@ const Insert = () => {
   const [systemStatus, setSystemStatus] = useState('Idle');
   const [isSensing, setIsSensing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [detections, setDetections] = useState([]);
+  const [liveCounts, setLiveCounts] = useState({ 'Plastic Bottle': 0, 'Can': 0 }); // Real-time material counts
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [dbError, setDbError] = useState(false);
 
+  // Initial setup: Check schema, device status, and fetch past sessions
   useEffect(() => {
-    console.log('[Insert.jsx] Mounting');
+    console.log('[Insert.jsx] Mounting component');
     const refreshSchema = async () => {
       try {
         await Promise.all([
           supabase.from('device_control').select('id').limit(1),
           supabase.from('recyclables').select('id').limit(1),
           supabase.from('recycling_sessions').select('id').limit(1),
+          supabase.from('session_detections').select('id').limit(1),
         ]);
-        console.log('[Insert.jsx] Schema refreshed');
+        console.log('[Insert.jsx] Schema refreshed successfully');
       } catch (error) {
         console.error('[Insert.jsx] Schema refresh error:', error);
         setDbError(true);
@@ -47,9 +51,9 @@ const Insert = () => {
 
     refreshSchema();
     checkDeviceStatus();
-    fetchDetections();
     fetchSessions();
 
+    // Subscribe to device_control changes
     const statusSubscription = supabase
       .channel('device_status_changes')
       .on(
@@ -63,29 +67,93 @@ const Insert = () => {
         handleStatusChange
       )
       .subscribe((status) => {
-        console.log('[Insert.jsx] device_control sub:', status);
-      });
-
-    const detectionsSubscription = supabase
-      .channel('recyclable_detections')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'recyclables' },
-        handleNewDetection
-      )
-      .subscribe((status) => {
-        console.log('[Insert.jsx] recyclables sub:', status);
+        console.log('[Insert.jsx] device_control subscription status:', status);
       });
 
     return () => {
-      console.log('[Insert.jsx] Unmounting');
+      console.log('[Insert.jsx] Unmounting component');
       supabase.removeChannel(statusSubscription);
-      supabase.removeChannel(detectionsSubscription);
     };
   }, []);
 
+  // Real-time subscription to session_detections
+  useEffect(() => {
+    if (!currentSessionId || !isSensing) {
+      console.log('[Insert.jsx] Skipping session_detections subscription: session_id or isSensing missing');
+      return;
+    }
+
+    console.log('[Insert.jsx] Setting up session_detections subscription for session_id:', currentSessionId);
+
+    // Subscribe to new insertions in session_detections
+    const detectionSubscription = supabase
+      .channel('session_detections_changes')
+      .on(
+        'postgres_changes',
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'session_detections',
+          filter: `session_id=eq.${currentSessionId}`
+        },
+        (payload) => {
+          console.log('[Insert.jsx] New detection received:', payload);
+          handleNewDetection(payload);
+        }
+      )
+      .subscribe((status) => {
+        console.log('[Insert.jsx] session_detections subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          setAlert({ type: 'info', message: 'Real-time detection enabled' });
+        } else if (status === 'CLOSED') {
+          setAlert({ type: 'warning', message: 'Real-time detection disconnected' });
+        }
+      });
+
+    // Fetch initial detections for the current session
+    const fetchInitialDetections = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('session_detections')
+          .select('material, quantity')
+          .eq('session_id', currentSessionId)
+          .eq('user_id', userData.id);
+
+        if (error) throw error;
+
+        const counts = { 'Plastic Bottle': 0, 'Can': 0 };
+        data.forEach((detection) => {
+          if (counts.hasOwnProperty(detection.material)) {
+            counts[detection.material] += detection.quantity;
+          }
+        });
+        setLiveCounts(counts);
+        console.log('[Insert.jsx] Initial session detections:', counts);
+      } catch (error) {
+        console.error('[Insert.jsx] Fetch initial session detections error:', error);
+        setAlert({
+          type: 'error',
+          message: `Failed to fetch initial detections: ${error.message}`,
+        });
+      }
+    };
+
+    fetchInitialDetections();
+
+    return () => {
+      console.log('[Insert.jsx] Unsubscribing from session_detections');
+      supabase.removeChannel(detectionSubscription);
+    };
+  }, [currentSessionId, isSensing]);
+
+  // Debug liveCounts updates
+  useEffect(() => {
+    console.log('[Insert.jsx] liveCounts updated:', liveCounts);
+  }, [liveCounts]);
+
+  // Check the current device status from device_control table
   const checkDeviceStatus = async () => {
-    console.log('[Insert.jsx] Checking status');
+    console.log('[Insert.jsx] Checking device status');
     try {
       const { data, error } = await supabase
         .from('device_control')
@@ -96,7 +164,7 @@ const Insert = () => {
         .limit(1);
 
       if (error) {
-        console.error('[Insert.jsx] Status error:', error);
+        console.error('[Insert.jsx] Status check error:', error);
         if (error.message.includes('does not exist')) {
           setDbError(true);
           throw new Error('Device control table missing.');
@@ -111,7 +179,6 @@ const Insert = () => {
       console.log('[Insert.jsx] Status data:', data);
       if (data && data.length > 0) {
         const isActive = data[0].command === 'start';
-        // Only set initial state if isSensing hasn't been set by startSensing
         if (!isSensing) {
           setIsSensing(isActive);
           setSystemStatus(isActive ? 'Scanning...' : 'Idle');
@@ -126,39 +193,7 @@ const Insert = () => {
     }
   };
 
-  const fetchDetections = async () => {
-    if (!userData.id) {
-      setAlert({ type: 'error', message: 'User ID not found. Please log in.' });
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('recyclables')
-        .select('id, device_id, material, quantity, created_at')
-        .eq('user_id', userData.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (error) throw error;
-
-      console.log('[Insert.jsx] Detections:', data);
-      setDetections(data || []);
-      if (data.length > 0) {
-        setAlert({
-          type: 'success',
-          message: `Received ${data.length} detection(s).`,
-        });
-      }
-    } catch (error) {
-      console.error('[Insert.jsx] Fetch error:', error);
-      setAlert({
-        type: 'error',
-        message: `Fetch error: ${error.message}`,
-      });
-    }
-  };
-
+  // Fetch past recycling sessions
   const fetchSessions = async () => {
     if (!userData.id) {
       setAlert({ type: 'error', message: 'User ID not found. Please log in.' });
@@ -175,7 +210,7 @@ const Insert = () => {
 
       if (error) throw error;
 
-      console.log('[Insert.jsx] Sessions:', data);
+      console.log('[Insert.jsx] Sessions fetched:', data);
       setSessions(data || []);
     } catch (error) {
       console.error('[Insert.jsx] Fetch sessions error:', error);
@@ -186,15 +221,13 @@ const Insert = () => {
     }
   };
 
+  // Handle device_control table changes
   const handleStatusChange = (payload) => {
     console.log('[Insert.jsx] Status event:', payload);
     const { new: newRecord } = payload;
     if (newRecord.device_id === 'esp32-cam-1' && newRecord.user_id === userData.id) {
       const isActive = newRecord.command === 'start';
-      // Only update isSensing if the change wasn't triggered by this component
       setIsSensing((prev) => {
-        // If we're already sensing and this is a stop command, update the state
-        // If we're not sensing and this is a start command, update the state
         if (prev && !isActive) {
           setSystemStatus('Idle');
           setAlert({ type: 'info', message: 'Sensor stopped externally' });
@@ -204,23 +237,42 @@ const Insert = () => {
           setAlert({ type: 'info', message: 'Sensor started externally' });
           return true;
         }
-        return prev; // Otherwise, preserve the current state
+        return prev;
       });
     }
   };
 
+  // Handle new detections from session_detections
   const handleNewDetection = (payload) => {
-    console.log('[Insert.jsx] Detection event:', payload);
+    console.log('[Insert.jsx] Handling new detection:', payload);
     const { new: newDetection } = payload;
-    if (newDetection.user_id === userData.id) {
-      setDetections((prev) => [newDetection, ...prev.slice(0, 4)]);
+    if (newDetection.user_id === userData.id && newDetection.session_id === currentSessionId) {
+      setLiveCounts((prev) => {
+        const updatedCounts = { ...prev };
+        if (updatedCounts.hasOwnProperty(newDetection.material)) {
+          updatedCounts[newDetection.material] += newDetection.quantity;
+          console.log('[Insert.jsx] Updated live counts:', updatedCounts);
+          return updatedCounts;
+        } else {
+          console.log('[Insert.jsx] Material not recognized:', newDetection.material);
+          return prev;
+        }
+      });
       setAlert({
         type: 'success',
         message: `Detected: ${newDetection.material} (${newDetection.quantity})`,
       });
+    } else {
+      console.log('[Insert.jsx] Detection ignored - mismatch:', {
+        receivedUserId: newDetection.user_id,
+        expectedUserId: userData.id,
+        receivedSessionId: newDetection.session_id,
+        expectedSessionId: currentSessionId,
+      });
     }
   };
 
+  // Start sensing session
   const startSensing = async () => {
     if (isSensing || isLoading || dbError || !userData.id) {
       if (!userData.id) {
@@ -229,11 +281,10 @@ const Insert = () => {
       return;
     }
     setIsLoading(true);
-    console.log('[Insert.jsx] Start command');
+    console.log('[Insert.jsx] Sending start command');
 
     try {
-      await supabase.from('recycling_sessions').select('id').limit(1);
-
+      // Create a new session in recycling_sessions
       const { data: sessionData, error: sessionError } = await supabase
         .from('recycling_sessions')
         .insert([
@@ -254,10 +305,12 @@ const Insert = () => {
       console.log('[Insert.jsx] New session created:', sessionData);
       setCurrentSessionId(sessionData.id);
 
+      // Update device_control to start sensing
       const newCommand = {
         device_id: 'esp32-cam-1',
         command: 'start',
         user_id: userData.id,
+        session_id: sessionData.id,
         updated_at: new Date().toISOString(),
       };
 
@@ -267,6 +320,7 @@ const Insert = () => {
 
       if (error) throw error;
 
+      // Verify the command was set
       const { data, error: fetchError } = await supabase
         .from('device_control')
         .select('command')
@@ -281,8 +335,8 @@ const Insert = () => {
       setIsSensing(true);
       setSystemStatus('Scanning...');
       setAlert({ type: 'success', message: 'Sensor started' });
-      setDetections([]);
-      console.log('[Insert.jsx] After startSensing - isSensing:', true, 'isLoading:', false, 'dbError:', dbError, 'currentSessionId:', sessionData.id);
+      setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 }); // Reset counts
+      console.log('[Insert.jsx] Start successful - isSensing:', true, 'session_id:', sessionData.id);
     } catch (error) {
       console.error('[Insert.jsx] Start error:', error);
       setAlert({
@@ -294,17 +348,22 @@ const Insert = () => {
     }
   };
 
+  // Stop sensing session (used by both Stop Sensing and Done Inserting)
   const stopSensing = async () => {
-    console.log('[Insert.jsx] Attempting stopSensing - isSensing:', isSensing, 'isLoading:', isLoading, 'dbError:', dbError, 'userData.id:', userData.id, 'currentSessionId:', currentSessionId);
-    if (!isSensing || isLoading || dbError || !userData.id || !currentSessionId) return;
+    if (!isSensing || isLoading || dbError || !userData.id || !currentSessionId) {
+      console.log('[Insert.jsx] Stop skipped - invalid state:', { isSensing, isLoading, dbError, userId: userData.id, sessionId: currentSessionId });
+      return;
+    }
     setIsLoading(true);
-    console.log('[Insert.jsx] Stop command');
+    console.log('[Insert.jsx] Sending stop command');
 
     try {
+      // Update device_control to stop sensing
       const newCommand = {
         device_id: 'esp32-cam-1',
         command: 'stop',
         user_id: userData.id,
+        session_id: currentSessionId,
         updated_at: new Date().toISOString(),
       };
 
@@ -314,6 +373,7 @@ const Insert = () => {
 
       if (error) throw error;
 
+      // Verify the command was set
       const { data, error: fetchError } = await supabase
         .from('device_control')
         .select('command')
@@ -325,15 +385,12 @@ const Insert = () => {
         throw new Error('Failed to verify stop command');
       }
 
+      // Aggregate session detections
       const { data: sessionDetections, error: detectionError } = await supabase
-        .from('recyclables')
+        .from('session_detections')
         .select('material, quantity')
-        .eq('user_id', userData.id)
-        .gte('created_at', (await supabase
-          .from('recycling_sessions')
-          .select('created_at')
-          .eq('id', currentSessionId)
-          .single()).data.created_at);
+        .eq('session_id', currentSessionId)
+        .eq('user_id', userData.id);
 
       if (detectionError) throw detectionError;
 
@@ -347,11 +404,42 @@ const Insert = () => {
         }
       });
 
+      // Insert aggregated counts into recyclables table
+      const materialsToInsert = [];
+      if (bottleCount > 0) {
+        materialsToInsert.push({
+          device_id: 'esp32-cam-1',
+          user_id: userData.id,
+          material: 'Plastic Bottle',
+          quantity: bottleCount,
+          created_at: new Date().toISOString(),
+        });
+      }
+      if (canCount > 0) {
+        materialsToInsert.push({
+          device_id: 'esp32-cam-1',
+          user_id: userData.id,
+          material: 'Can',
+          quantity: canCount,
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      if (materialsToInsert.length > 0) {
+        const { error: insertError } = await supabase
+          .from('recyclables')
+          .insert(materialsToInsert);
+
+        if (insertError) throw insertError;
+      }
+
+      // Calculate points and money
       const pointsPerItem = 10;
       const moneyPerItem = 0.05;
       const pointsEarned = (bottleCount + canCount) * pointsPerItem;
       const moneyVal = (bottleCount + canCount) * moneyPerItem;
 
+      // Update recycling_sessions with session data
       const { error: updateError } = await supabase
         .from('recycling_sessions')
         .update({
@@ -364,6 +452,7 @@ const Insert = () => {
 
       if (updateError) throw updateError;
 
+      // Update user points
       const { error: userError } = await supabase
         .from('users')
         .update({ points: userData.points + pointsEarned })
@@ -371,11 +460,21 @@ const Insert = () => {
 
       if (userError) throw userError;
 
+      // Clear session_detections for this session
+      const { error: clearError } = await supabase
+        .from('session_detections')
+        .delete()
+        .eq('session_id', currentSessionId)
+        .eq('user_id', userData.id);
+
+      if (clearError) throw clearError;
+
       await fetchSessions();
 
       setIsSensing(false);
       setSystemStatus('Idle');
       setCurrentSessionId(null);
+      setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setAlert({
         type: 'success',
         message: `Session ended. Earned ${pointsEarned} points ($${moneyVal.toFixed(2)}).`,
@@ -389,6 +488,11 @@ const Insert = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Done Inserting button handler
+  const doneInserting = async () => {
+    await stopSensing();
   };
 
   return (
@@ -405,9 +509,10 @@ const Insert = () => {
           <h3>Database Setup Needed</h3>
           <p>Run this SQL in Supabase SQL Editor to fix the schema:</p>
           <pre>
-{`-- Add user_id to device_control
+{`-- Add user_id and session_id to device_control
 ALTER TABLE public.device_control
-ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id),
+ADD COLUMN IF NOT EXISTS session_id UUID;
 
 -- Add index for better performance
 CREATE INDEX IF NOT EXISTS device_control_user_id_idx ON public.device_control (user_id);
@@ -420,6 +525,10 @@ ADD COLUMN IF NOT EXISTS id UUID PRIMARY KEY DEFAULT gen_random_uuid();
 ALTER TABLE public.device_control
 DROP CONSTRAINT IF EXISTS device_control_pkey;
 
+-- Drop the existing unique constraint if it exists to avoid conflicts
+ALTER TABLE public.device_control
+DROP CONSTRAINT IF EXISTS device_control_device_id_user_id_unique;
+
 -- Add unique constraint on (device_id, user_id)
 ALTER TABLE public.device_control
 ADD CONSTRAINT device_control_device_id_user_id_unique UNIQUE (device_id, user_id);
@@ -428,21 +537,31 @@ ADD CONSTRAINT device_control_device_id_user_id_unique UNIQUE (device_id, user_i
 ALTER TABLE public.device_control ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recyclables ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recycling_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.session_detections ENABLE ROW LEVEL SECURITY;
 
 -- Update RLS policies
 DROP POLICY IF EXISTS "Allow all operations on device_control" ON public.device_control;
+DROP POLICY IF EXISTS "Allow users to manage their device control" ON public.device_control;
 CREATE POLICY "Allow users to manage their device control"
   ON public.device_control FOR ALL
   USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Allow all operations on recyclables" ON public.recyclables;
+DROP POLICY IF EXISTS "Allow users to manage their recyclables" ON public.recyclables;
 CREATE POLICY "Allow users to manage their recyclables"
   ON public.recyclables FOR ALL
   USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Allow all operations on recycling_sessions" ON public.recycling_sessions;
+DROP POLICY IF EXISTS "Allow users to manage their recycling sessions" ON public.recycling_sessions;
 CREATE POLICY "Allow users to manage their recycling sessions"
   ON public.recycling_sessions FOR ALL
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Allow all operations on session_detections" ON public.session_detections;
+DROP POLICY IF EXISTS "Allow users to manage their session detections" ON public.session_detections;
+CREATE POLICY "Allow users to manage their session detections"
+  ON public.session_detections FOR ALL
   USING (auth.uid() = user_id);
 `}
           </pre>
@@ -485,6 +604,16 @@ CREATE POLICY "Allow users to manage their recycling sessions"
               >
                 <FontAwesomeIcon icon={faStop} /> {isLoading ? 'Stopping...' : 'Stop Sensing'}
               </button>
+
+              <button
+                type="button"
+                className="control-btn done-btn"
+                onClick={doneInserting}
+                disabled={!isSensing || isLoading || dbError}
+                style={{ backgroundColor: '#2196f3', marginLeft: '10px' }}
+              >
+                <FontAwesomeIcon icon={faCheck} /> {isLoading ? 'Finishing...' : 'Done Inserting'}
+              </button>
             </div>
           </div>
 
@@ -492,22 +621,21 @@ CREATE POLICY "Allow users to manage their recycling sessions"
             <div className="stat-label">
               <FontAwesomeIcon icon={faHistory} /> Current Session Detections
             </div>
-            {detections.length > 0 ? (
+            {isSensing ? (
               <ul className="detections-list">
-                {detections.map((item) => (
-                  <li key={item.id}>
-                    {item.material} ({item.quantity}) -{' '}
-                    {new Date(item.created_at).toLocaleString()}
-                  </li>
+                {Object.entries(liveCounts).map(([material, count]) => (
+                  count > 0 && (
+                    <li key={material}>
+                      {material}: {count}
+                    </li>
+                  )
                 ))}
+                {Object.values(liveCounts).every(count => count === 0) && (
+                  <p>Insert materials to see detections.</p>
+                )}
               </ul>
             ) : (
-              <p>
-                No detections.{' '}
-                {isSensing
-                  ? 'ESP32-CAM is sensing. Check Serial Monitor for Supabase errors.'
-                  : 'Click "Start Sensing".'}
-              </p>
+              <p>Click "Start Sensing" to begin.</p>
             )}
           </div>
 
