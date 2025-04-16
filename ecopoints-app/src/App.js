@@ -28,12 +28,17 @@ function App() {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         console.log(`Attempt ${attempt}: Fetching GET ${API_URL}/api/health`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
         const response = await fetch(`${API_URL}/api/health`, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
           mode: 'cors',
-          signal: AbortSignal.timeout(5000),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         console.log('Health response:', {
           status: response.status,
@@ -72,16 +77,27 @@ function App() {
 
   const testSupabaseConnection = async () => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const { data: supabaseData, error } = await supabase
         .from('device_control')
         .select('device_id, command')
-        .limit(1);
+        .limit(1)
+        .abortSignal(controller.signal);
+
+      clearTimeout(timeoutId);
+
       if (error) throw error;
       console.log('Supabase connected:', supabaseData);
       setSupabaseStatus('Connected');
     } catch (error) {
       console.error('Supabase error:', error.message);
-      setSupabaseStatus(`Failed: ${error.message}`);
+      if (error.name === 'AbortError') {
+        setSupabaseStatus('Failed: Request timed out');
+      } else {
+        setSupabaseStatus(`Failed: ${error.message}`);
+      }
     }
   };
 

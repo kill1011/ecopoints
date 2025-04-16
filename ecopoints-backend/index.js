@@ -24,26 +24,12 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
 );
 
-// CORS configuration
-const corsOptions = {
-  origin: [
-    'http://localhost:3000',
-    'https://ecopoints-cqs7X9ch-9-angelo-librons-projects.vercel.app',
-    'https://ecopoints-teal.vercel.app'
-  ],
-  credentials: true,
+// Simplified CORS configuration to allow all origins (temporary for debugging)
+app.use(cors({
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-};
-
-app.use(cors(corsOptions));
-
-// Explicitly handle preflight requests for specific routes
-app.options('/api/health', cors(corsOptions));
-app.options('/api/login', cors(corsOptions));
-app.options('/api/auth/signup', cors(corsOptions));
-app.options('/api/trigger-pusher', cors(corsOptions));
-app.options('/api/get-command', cors(corsOptions));
+}));
 
 app.use(express.json());
 
