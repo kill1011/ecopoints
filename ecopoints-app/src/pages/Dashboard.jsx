@@ -34,8 +34,8 @@ const Dashboard = () => {
   };
 
   const calculatePointsAndMoney = (material, quantity) => {
-    const pointsPerItem = 10; // Same as in Insert.jsx
-    const moneyPerItem = 0.05; // Same as in Insert.jsx
+    const pointsPerItem = 10;
+    const moneyPerItem = 0.05;
     const totalPoints = quantity * pointsPerItem;
     const totalMoney = quantity * moneyPerItem;
     return { points: totalPoints, money: totalMoney };
@@ -44,14 +44,20 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchUserStats = async () => {
       try {
-        // Get current session first
+        // Get current session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        console.log('Session:', session);
+        console.log('Session Error:', sessionError);
 
         if (sessionError || !session) {
           setError('Authentication required');
+          console.log('No session, redirecting to login');
           navigate('/login');
           return;
         }
+
+        console.log('User ID:', session.user.id);
+        console.log('User Metadata:', session.user.user_metadata);
 
         // Fetch user data
         const { data: userData, error: userError } = await supabase
@@ -62,7 +68,7 @@ const Dashboard = () => {
           .maybeSingle();
 
         if (userError) {
-          console.error('Database Error:', userError);
+          console.error('User Query Error:', userError);
           throw new Error(userError.message);
         }
 
@@ -81,7 +87,10 @@ const Dashboard = () => {
             .select()
             .single();
 
-          if (createError) throw createError;
+          if (createError) {
+            console.error('Create User Error:', createError);
+            throw createError;
+          }
 
           setStats({
             name: newUser.name,
@@ -101,15 +110,18 @@ const Dashboard = () => {
           });
         }
 
-        // Fetch recent detections from recyclables table
+        // Fetch recent detections using device_id
         const { data: detectionsData, error: detectionsError } = await supabase
           .from('recyclables')
           .select('material, quantity, created_at')
-          .eq('user_id', session.user.id)
+          .eq('device_id', 'esp32-cam-1')
           .order('created_at', { ascending: false })
           .limit(5);
 
-        if (detectionsError) throw detectionsError;
+        if (detectionsError) {
+          console.error('Detections Query Error:', detectionsError);
+          throw detectionsError;
+        }
 
         const enrichedDetections = detectionsData.map(detection => ({
           ...detection,
@@ -180,7 +192,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* New Section for Recent Detections */}
             <div className="detections-section">
               <h2>
                 <FontAwesomeIcon icon={faList} /> Recent Materials Received
