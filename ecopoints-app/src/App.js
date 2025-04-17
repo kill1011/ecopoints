@@ -76,6 +76,7 @@ function App() {
   };
 
   const testSupabaseConnection = async () => {
+    let isMounted = true;
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -88,22 +89,32 @@ function App() {
 
       clearTimeout(timeoutId);
 
-      if (error) throw error;
-      console.log('Supabase connected:', supabaseData);
-      setSupabaseStatus('Connected');
+      if (isMounted && !error) {
+        console.log('Supabase connected:', supabaseData);
+        setSupabaseStatus('Connected');
+      }
     } catch (error) {
-      console.error('Supabase error:', error.message);
-      if (error.name === 'AbortError') {
-        setSupabaseStatus('Failed: Request timed out');
-      } else {
-        setSupabaseStatus(`Failed: ${error.message}`);
+      if (isMounted) {
+        console.error('Supabase error:', error.message);
+        setSupabaseStatus(error.name === 'AbortError' ? 'Failed: Request timed out' : `Failed: ${error.message}`);
       }
     }
+    return () => {
+      isMounted = false;
+    };
   };
 
   useEffect(() => {
-    checkBackendConnection();
-    testSupabaseConnection();
+    let cleanup = checkBackendConnection();
+    const supabaseCleanup = testSupabaseConnection();
+
+    // Cleanup function to handle unmount
+    return () => {
+      if (typeof cleanup === 'function') cleanup();
+      if (typeof supabaseCleanup === 'function') supabaseCleanup();
+      // Add unsubscribe for real-time if used
+      supabase.removeAllChannels?.(); // Clean up any real-time subscriptions if present
+    };
   }, []);
 
   return (
