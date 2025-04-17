@@ -14,7 +14,7 @@ const app = express();
 const pusher = new Pusher({
   appId: '1975965',
   key: '0b19c0609da3c9a06820',
-  secret: '542264cd1f75cd43faa9',
+  secret: '542264cd43faa9',
   cluster: 'ap1',
 });
 
@@ -24,13 +24,16 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHxqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
 );
 
-// Custom CORS middleware to ensure consistent headers
+// Enhanced custom CORS middleware with logging
 app.use((req, res, next) => {
+  console.log(`CORS Middleware - Request: ${req.method} ${req.url}, Origin: ${req.headers.origin}`);
   res.setHeader('Access-Control-Allow-Origin', 'https://ecopoints-teal.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Vary', 'Origin'); // Helps with caching and origin handling
   if (req.method === 'OPTIONS') {
+    console.log('Handling OPTIONS preflight request');
     return res.status(204).send();
   }
   next();
