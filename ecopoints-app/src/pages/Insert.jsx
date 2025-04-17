@@ -1,3 +1,4 @@
+// File: Insert.jsx
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -11,15 +12,15 @@ const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Backend API URL (replace with your deployed Vercel URL)
-const backendApiUrl = "https://ecopoints-api.vercel.app"; // Ensure this is correct
+// Backend API URL
+const backendApiUrl = "https://ecopoints-api.vercel.app";
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [userData] = useState({
     name: user.name || 'Guest',
     points: user.points || 0,
-    id: user.id || null,
+    id: user.id || null, // Will be null if not logged in
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [systemStatus, setSystemStatus] = useState('Idle');
@@ -34,6 +35,14 @@ const Insert = () => {
   const [recentDetections, setRecentDetections] = useState([]);
   const [useFallback, setUseFallback] = useState(false);
   const [pusherStatus, setPusherStatus] = useState('Connecting...');
+
+  // Log userData.id for debugging
+  useEffect(() => {
+    console.log('[Insert.jsx] userData.id:', userData.id);
+    if (!userData.id) {
+      setAlert({ type: 'error', message: 'Please log in to start sensing.' });
+    }
+  }, [userData.id]);
 
   useEffect(() => {
     console.log('[Insert.jsx] Mounting component');
@@ -53,7 +62,9 @@ const Insert = () => {
     };
 
     refreshSchema();
-    fetchSessions();
+    if (userData.id) {
+      fetchSessions();
+    }
 
     // Setup Pusher with initial connection check
     const pusher = new Pusher('0b19c0609da3c9a06820', {
@@ -88,7 +99,7 @@ const Insert = () => {
         });
 
         channel.bind('pusher:subscription_succeeded', () => {
-          console.log('[Insert.jsx] Subscribed to detections channel');
+          console.log('[Insert.jsx] Subscribed to detection channel');
         });
 
         channel.bind('pusher:subscription_error', (error) => {
@@ -201,7 +212,7 @@ const Insert = () => {
       const errorMessage = 'Cannot send command: Missing user ID or session ID';
       console.error('[Insert.jsx]', errorMessage);
       setAlert({ type: 'error', message: errorMessage });
-      return;
+      return false;
     }
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
@@ -216,21 +227,23 @@ const Insert = () => {
             timestamp: new Date().toISOString(),
           },
         };
-        console.log(`[Insert.jsx] Attempt ${attempt}/${retries} sending command to:`, backendApiUrl);
+        console.log(`[Insert.jsx] Attempt ${attempt}/${retries} sending command to:`, backendApiUrl + '/api/trigger-pusher');
         console.log('[Insert.jsx] Payload:', JSON.stringify(payload, null, 2));
-        const response = await fetch(backendApiUrl, {
+        const response = await fetch(backendApiUrl + '/api/trigger-pusher', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+        const result = await response.json();
         if (!response.ok) {
-          const result = await response.json();
           throw new Error(result.error || `HTTP error: ${response.status}`);
         }
-        console.log('[Insert.jsx] Command sent successfully:', command);
-        return;
+        console.log('[Insert.jsx] Command sent successfully:', result);
+        setAlert({ type: 'success', message: `Command ${command} sent successfully` });
+        return true;
       } catch (error) {
         console.error(`[Insert.jsx] Attempt ${attempt}/${retries} failed:`, error);
+        console.error('[Insert.jsx] Error details:', error.message);
         if (attempt === retries) {
           let errorMessage = 'Failed to send command after retries';
           if (error.message === 'Failed to fetch') {
@@ -241,7 +254,7 @@ const Insert = () => {
             errorMessage = `Error: ${error.message}`;
           }
           setAlert({ type: 'error', message: errorMessage });
-          return;
+          return false;
         }
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
@@ -252,6 +265,7 @@ const Insert = () => {
     if (!isSensing) return;
 
     const { material, quantity, session_id } = data;
+    console.log('[Insert.jsx] Received detection:', data);
     if (!['Plastic Bottle', 'Can'].includes(material)) {
       console.warn('[Insert.jsx] Invalid material:', material);
       return;
@@ -342,13 +356,14 @@ const Insert = () => {
       if (sessionError) throw sessionError;
 
       setCurrentSessionId(sessionData.id);
+      const commandSent = await sendPusherCommand('start-sensing');
+      if (!commandSent) throw new Error('Failed to send start-sensing command');
+
       setIsSensing(true);
       setSystemStatus('Scanning...');
       setSessionInitiated(true);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setRecentDetections([]);
-      await sendPusherCommand('start-sensing');
-      setAlert({ type: 'success', message: 'Started receiving detections' });
       console.log('[Insert.jsx] Start successful, session_id:', sessionData.id);
     } catch (error) {
       console.error('[Insert.jsx] Start error:', error);
@@ -365,7 +380,8 @@ const Insert = () => {
     }
     setIsLoading(true);
     try {
-      await sendPusherCommand('stop-sensing');
+      const commandSent = await sendPusherCommand('stop-sensing');
+      if (!commandSent) throw new Error('Failed to send stop-sensing command');
 
       const { data: sessionDetections, error: detectionError } = await supabase
         .from('session_detections')
@@ -587,7 +603,7 @@ CREATE POLICY "Allow users to manage device control" ON device_control
                   type="button"
                   className="control-btn start-btn"
                   onClick={startSensing}
-                  disabled={isSensing || isLoading || dbError}
+                  disabled={isSensing || isLoading || dbError || !userData.id}
                 >
                   {isLoading && <span className="loading-spinner"></span>}
                   <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
