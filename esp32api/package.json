@@ -1,28 +1,13 @@
 {
-  "name": "esp32api",
+  "name": "esp32-api",
   "version": "1.0.0",
-  "description": "ESP32 Recyclables Detection System",
-  "main": "index.js",
   "scripts": {
-    "vercel-build": "npm install",
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "deploy": "vercel --prod"
+    "vercel-build": "npm install"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@fortawesome/free-solid-svg-icons": "^6.7.2",
-    "@fortawesome/react-fontawesome": "^0.2.2",
-    "@supabase/supabase-js": "^2.49.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-scripts": "^5.0.1"
+    "@supabase/supabase-js": "^2.45.4"
   },
-  "devDependencies": {
-    "vercel": "^37.14.0"
+  "engines": {
+    "node": ">=18"
   }
 }
