@@ -6,7 +6,17 @@
   "scripts": {
     "start": "node --no-deprecation index.js",
     "dev": "nodemon --no-deprecation index.js"
+    
   },
+    "channel": "commands",
+    "event": "device-command",
+    "data": {
+      "device_id": "esp32-cam-1",
+      "user_id": "test-user-id",
+      "session_id": "test-session-id",
+      "command": "start-sensing",
+      "timestamp": "2025-04-16T12:00:00Z"
+    },
   "keywords": [],
   "author": "",
   "license": "ISC",

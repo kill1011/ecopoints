@@ -12,7 +12,7 @@ const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Backend API URL (replace with your deployed Vercel URL)
-const backendApiUrl = "https://ecopoints-api.vercel.app";
+const backendApiUrl = "https://ecopoints-api.vercel.app"; // Ensure this is correct
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -196,12 +196,16 @@ const Insert = () => {
     };
   }, [useFallback, isSensing, currentSessionId, userData.id]);
 
-  const sendPusherCommand = async (command) => {
-    try {
-      const response = await fetch(backendApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+  const sendPusherCommand = async (command, retries = 3, delay = 1000) => {
+    if (!userData.id || !currentSessionId) {
+      const errorMessage = 'Cannot send command: Missing user ID or session ID';
+      console.error('[Insert.jsx]', errorMessage);
+      setAlert({ type: 'error', message: errorMessage });
+      return;
+    }
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const payload = {
           channel: 'commands',
           event: 'device-command',
           data: {
@@ -211,14 +215,36 @@ const Insert = () => {
             command: command,
             timestamp: new Date().toISOString(),
           },
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to send command');
-      console.log('[Insert.jsx] Command sent successfully:', command);
-    } catch (error) {
-      console.error('[Insert.jsx] Error sending command:', error);
-      setAlert({ type: 'error', message: `Failed to send command: ${error.message}` });
+        };
+        console.log(`[Insert.jsx] Attempt ${attempt}/${retries} sending command to:`, backendApiUrl);
+        console.log('[Insert.jsx] Payload:', JSON.stringify(payload, null, 2));
+        const response = await fetch(backendApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || `HTTP error: ${response.status}`);
+        }
+        console.log('[Insert.jsx] Command sent successfully:', command);
+        return;
+      } catch (error) {
+        console.error(`[Insert.jsx] Attempt ${attempt}/${retries} failed:`, error);
+        if (attempt === retries) {
+          let errorMessage = 'Failed to send command after retries';
+          if (error.message === 'Failed to fetch') {
+            errorMessage = 'Unable to connect to the server. Please check your network or server status.';
+          } else if (error.message.includes('HTTP error')) {
+            errorMessage = `Server error: ${error.message}`;
+          } else {
+            errorMessage = `Error: ${error.message}`;
+          }
+          setAlert({ type: 'error', message: errorMessage });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
   };
 
