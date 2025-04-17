@@ -21,7 +21,7 @@ const pusher = new Pusher({
 // Initialize Supabase
 const supabase = createClient(
   'https://welxjeybnoeeusehuoat.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHxqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
 );
 
 // Simplified CORS configuration to allow all origins (temporary for debugging)
@@ -238,6 +238,69 @@ app.use((err, req, res, next) => {
   res.status(500).json({ 
     message: 'Internal server error',
     error: err.message
+  });
+});
+
+// NEW: Add Server-Sent Events (SSE) endpoint for backend-to-frontend connection
+app.get('/api/realtime', async (req, res) => {
+  // Set headers for Server-Sent Events
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*'); // Match existing CORS
+
+  // Keep the connection alive by sending a comment every 15 seconds
+  const keepAlive = setInterval(() => {
+    res.write(':keep-alive\n\n');
+  }, 15000);
+
+  // Function to send data to the frontend
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Initial message to confirm connection
+  sendEvent({ message: 'Connected to backend real-time updates' });
+
+  // Poll Supabase for updates in the device_control table
+  let lastUpdatedAt = null;
+  const pollInterval = setInterval(async () => {
+    try {
+      const { device_id = 'esp32-cam-1', user_id = 'test-user' } = req.query;
+      const { data, error } = await supabase
+        .from('device_control')
+        .select('command, session_id, updated_at')
+        .eq('device_id', device_id)
+        .eq('user_id', user_id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !data) {
+        sendEvent({ status: 'idle', message: 'No active command', lastUpdated: new Date().toISOString() });
+        return;
+      }
+
+      // Only send updates if the data has changed
+      if (lastUpdatedAt !== data.updated_at) {
+        lastUpdatedAt = data.updated_at;
+        sendEvent({
+          status: data.command === 'start-sensing' ? 'sensing' : 'idle',
+          sessionId: data.session_id,
+          lastUpdated: data.updated_at,
+        });
+      }
+    } catch (error) {
+      console.error('Real-time polling error:', error);
+      sendEvent({ status: 'error', message: 'Failed to fetch updates' });
+    }
+  }, 5000); // Poll every 5 seconds
+
+  // Handle client disconnect
+  req.on('close', () => {
+    clearInterval(pollInterval);
+    clearInterval(keepAlive);
+    res.end();
   });
 });
 
