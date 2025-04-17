@@ -1,9 +1,7 @@
-// File: Insert.jsx
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop, faHistory, faList, faCheck, faBottleWater, faBeer, faSignal } from '@fortawesome/free-solid-svg-icons';
-import Pusher from 'pusher-js';
 import { createClient } from '@supabase/supabase-js';
 import '../styles/Insert.css';
 
@@ -12,15 +10,15 @@ const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Backend API URL
-const backendApiUrl = "https://ecopoints-api.vercel.app";
+// ESP32 API URL (replace with your ESP32's IP address)
+const esp32ApiUrl = "http://<ESP32_IP_ADDRESS>";
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [userData] = useState({
     name: user.name || 'Guest',
     points: user.points || 0,
-    id: user.id || null, // Will be null if not logged in
+    id: user.id || null,
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [systemStatus, setSystemStatus] = useState('Idle');
@@ -30,28 +28,23 @@ const Insert = () => {
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [dbError, setDbError] = useState(false);
-  const [sessionInitiated, setSessionInitiated] = useState(false);
   const [lastDetection, setLastDetection] = useState(null);
   const [recentDetections, setRecentDetections] = useState([]);
-  const [useFallback, setUseFallback] = useState(false);
-  const [pusherStatus, setPusherStatus] = useState('Connecting...');
+  const [connectionStatus, setConnectionStatus] = useState('Disconnected');
 
-  // Log userData.id for debugging
   useEffect(() => {
     console.log('[Insert.jsx] userData.id:', userData.id);
     if (!userData.id) {
       setAlert({ type: 'error', message: 'Please log in to start sensing.' });
     }
-  }, [userData.id]);
 
-  useEffect(() => {
-    console.log('[Insert.jsx] Mounting component');
-
+    // Verify Supabase schema
     const refreshSchema = async () => {
       try {
         await Promise.all([
           supabase.from('recyclables').select('id').limit(1),
           supabase.from('recycling_sessions').select('id').limit(1),
+          supabase.from('session_detections').select('id').limit(1),
         ]);
         console.log('[Insert.jsx] Schema verified');
       } catch (error) {
@@ -60,121 +53,32 @@ const Insert = () => {
         setAlert({ type: 'error', message: 'Database schema error. Check console.' });
       }
     };
-
     refreshSchema();
+
     if (userData.id) {
       fetchSessions();
     }
 
-    // Setup Pusher with initial connection check
-    const pusher = new Pusher('0b19c0609da3c9a06820', {
-      cluster: 'ap1',
-      forceTLS: true,
-      logToConsole: true,
-      disableStats: true,
-      pongTimeout: 15000,
-      unavailableTimeout: 15000,
-      enabledTransports: ['ws'],
-      disabledTransports: ['xhr_streaming', 'xhr_polling', 'sockjs'],
-    });
-
-    let retryCount = 0;
-    const maxRetries = 3;
-
-    const connectPusher = () => {
-      pusher.connect();
-
-      pusher.connection.bind('connected', () => {
-        console.log('[Insert.jsx] Pusher connected successfully');
-        setPusherStatus('Connected');
-        retryCount = 0;
-        setUseFallback(false);
-
-        const channel = pusher.subscribe('detections');
-        channel.bind('new-detection', (data) => {
-          console.log('[Insert.jsx] Pusher detection:', data);
-          if (data.device_id === 'esp32-cam-1' && data.user_id === userData.id) {
-            handleNewDetection(data);
-          }
-        });
-
-        channel.bind('pusher:subscription_succeeded', () => {
-          console.log('[Insert.jsx] Subscribed to detection channel');
-        });
-
-        channel.bind('pusher:subscription_error', (error) => {
-          console.error('[Insert.jsx] Subscription error:', error);
-          setPusherStatus('Subscription Failed');
-        });
-      });
-
-      pusher.connection.bind('error', (error) => {
-        console.error('[Insert.jsx] Pusher connection error:', error);
-        console.error('[Insert.jsx] Error details:', JSON.stringify(error, null, 2));
-        setPusherStatus(`Connection Error (Retry ${retryCount + 1}/${maxRetries})`);
-        retryCount++;
-        if (retryCount < maxRetries) {
-          console.log(`[Insert.jsx] Retrying Pusher connection (${retryCount}/${maxRetries})...`);
-          setTimeout(connectPusher, 5000);
-        } else {
-          console.error('[Insert.jsx] Max retries reached. Switching to fallback mode.');
-          setAlert({ type: 'warning', message: 'Real-time updates unavailable. Using fallback mode.' });
-          setPusherStatus('Disconnected');
-          setUseFallback(true);
-          startFallbackPolling();
-        }
-      });
-
-      pusher.connection.bind('unavailable', () => {
-        console.warn('[Insert.jsx] Pusher connection unavailable');
-        setPusherStatus('Unavailable');
-      });
-    };
-
-    const startFallbackPolling = () => {
-      if (isSensing && currentSessionId && userData.id) {
-        fetchLatestDetection();
-      }
-    };
-
-    const fetchLatestDetection = async () => {
+    // Check ESP32 connection
+    const checkEsp32 = async () => {
       try {
-        const { data, error } = await supabase
-          .from('session_detections')
-          .select('material, quantity, created_at')
-          .eq('session_id', currentSessionId)
-          .eq('user_id', userData.id)
-          .order('created_at', { ascending: false })
-          .limit(1);
-        if (error) throw error;
-        if (data && data.length > 0) {
-          const detection = data[0];
-          handleNewDetection({
-            material: detection.material,
-            quantity: detection.quantity,
-            device_id: 'esp32-cam-1',
-            user_id: userData.id,
-            session_id: currentSessionId,
-            timestamp: detection.created_at,
-          });
+        const response = await fetch(`${esp32ApiUrl}/api/status`);
+        if (response.ok) {
+          setConnectionStatus('Connected');
+        } else {
+          throw new Error('ESP32 not reachable');
         }
       } catch (error) {
-        console.error('[Insert.jsx] Immediate polling error:', error);
+        console.error('[Insert.jsx] ESP32 connection error:', error);
+        setConnectionStatus('Disconnected');
+        setAlert({ type: 'warning', message: 'Cannot connect to ESP32. Check network or IP address.' });
       }
     };
+    checkEsp32();
 
-    connectPusher();
-
-    return () => {
-      console.log('[Insert.jsx] Unmounting component');
-      pusher.disconnect();
-      setPusherStatus('Disconnected');
-    };
-  }, [userData.id]);
-
-  useEffect(() => {
+    // Polling for new detections when sensing
     let pollInterval;
-    if (useFallback && isSensing && currentSessionId && userData.id) {
+    if (isSensing && currentSessionId && userData.id) {
       pollInterval = setInterval(async () => {
         try {
           const { data, error } = await supabase
@@ -190,14 +94,13 @@ const Insert = () => {
             handleNewDetection({
               material: detection.material,
               quantity: detection.quantity,
-              device_id: 'esp32-cam-1',
-              user_id: userData.id,
               session_id: currentSessionId,
+              user_id: userData.id,
               timestamp: detection.created_at,
             });
           }
         } catch (error) {
-          console.error('[Insert.jsx] Fallback polling error:', error);
+          console.error('[Insert.jsx] Polling error:', error);
         }
       }, 5000);
     }
@@ -205,59 +108,33 @@ const Insert = () => {
     return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [useFallback, isSensing, currentSessionId, userData.id]);
+  }, [userData.id, isSensing, currentSessionId]);
 
-  const sendPusherCommand = async (command, retries = 3, delay = 1000) => {
-    if (!userData.id || !currentSessionId) {
+  const sendEsp32Command = async (command, payload = {}) => {
+    if (!userData.id || (command === 'start-sensing' && !currentSessionId)) {
       const errorMessage = 'Cannot send command: Missing user ID or session ID';
       console.error('[Insert.jsx]', errorMessage);
       setAlert({ type: 'error', message: errorMessage });
       return false;
     }
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const payload = {
-          channel: 'commands',
-          event: 'device-command',
-          data: {
-            device_id: 'esp32-cam-1',
-            user_id: userData.id,
-            session_id: currentSessionId,
-            command: command,
-            timestamp: new Date().toISOString(),
-          },
-        };
-        console.log(`[Insert.jsx] Attempt ${attempt}/${retries} sending command to:`, backendApiUrl + '/api/trigger-pusher');
-        console.log('[Insert.jsx] Payload:', JSON.stringify(payload, null, 2));
-        const response = await fetch(backendApiUrl + '/api/trigger-pusher', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || `HTTP error: ${response.status}`);
-        }
-        console.log('[Insert.jsx] Command sent successfully:', result);
-        setAlert({ type: 'success', message: `Command ${command} sent successfully` });
-        return true;
-      } catch (error) {
-        console.error(`[Insert.jsx] Attempt ${attempt}/${retries} failed:`, error);
-        console.error('[Insert.jsx] Error details:', error.message);
-        if (attempt === retries) {
-          let errorMessage = 'Failed to send command after retries';
-          if (error.message === 'Failed to fetch') {
-            errorMessage = 'Unable to connect to the server. Please check your network or server status.';
-          } else if (error.message.includes('HTTP error')) {
-            errorMessage = `Server error: ${error.message}`;
-          } else {
-            errorMessage = `Error: ${error.message}`;
-          }
-          setAlert({ type: 'error', message: errorMessage });
-          return false;
-        }
-        await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      const url = command === 'start-sensing' ? `${esp32ApiUrl}/api/start-sensing` : `${esp32ApiUrl}/api/stop-sensing`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || `HTTP error: ${response.status}`);
       }
+      console.log('[Insert.jsx] Command sent successfully:', result);
+      setAlert({ type: 'success', message: `Command ${command} sent successfully` });
+      return true;
+    } catch (error) {
+      console.error('[Insert.jsx] Command error:', error);
+      setAlert({ type: 'error', message: `Failed to send command: ${error.message}` });
+      return false;
     }
   };
 
@@ -275,40 +152,24 @@ const Insert = () => {
       return;
     }
 
-    try {
-      const { error } = await supabase.from('session_detections').insert([
-        {
-          session_id: currentSessionId,
-          user_id: userData.id,
-          material,
-          quantity,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      if (error) throw error;
-
-      setLiveCounts((prev) => ({
-        ...prev,
-        [material]: (prev[material] || 0) + quantity,
-      }));
-      setLastDetection({
-        material,
-        quantity,
-        timestamp: new Date().toLocaleTimeString(),
-      });
-      setRecentDetections((prev) => [
-        { material, quantity, timestamp: new Date().toLocaleTimeString() },
-        ...prev.slice(0, 9),
-      ]);
-      setAlert({
-        type: 'success',
-        message: `Detected: ${material} (${quantity})`,
-      });
-      console.log('[Insert.jsx] Detection saved and UI updated:', { material, quantity });
-    } catch (error) {
-      console.error('[Insert.jsx] Save detection error:', error);
-      setAlert({ type: 'error', message: `Failed to save detection: ${error.message}` });
-    }
+    setLiveCounts((prev) => ({
+      ...prev,
+      [material]: (prev[material] || 0) + quantity,
+    }));
+    setLastDetection({
+      material,
+      quantity,
+      timestamp: new Date(data.timestamp).toLocaleTimeString(),
+    });
+    setRecentDetections((prev) => [
+      { material, quantity, timestamp: new Date(data.timestamp).toLocaleTimeString() },
+      ...prev.slice(0, 9),
+    ]);
+    setAlert({
+      type: 'success',
+      message: `Detected: ${material} (${quantity})`,
+    });
+    console.log('[Insert.jsx] Detection processed:', { material, quantity });
   };
 
   const fetchSessions = async () => {
@@ -356,12 +217,14 @@ const Insert = () => {
       if (sessionError) throw sessionError;
 
       setCurrentSessionId(sessionData.id);
-      const commandSent = await sendPusherCommand('start-sensing');
+      const commandSent = await sendEsp32Command('start-sensing', {
+        session_id: sessionData.id,
+        user_id: userData.id,
+      });
       if (!commandSent) throw new Error('Failed to send start-sensing command');
 
       setIsSensing(true);
       setSystemStatus('Scanning...');
-      setSessionInitiated(true);
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setRecentDetections([]);
       console.log('[Insert.jsx] Start successful, session_id:', sessionData.id);
@@ -380,7 +243,7 @@ const Insert = () => {
     }
     setIsLoading(true);
     try {
-      const commandSent = await sendPusherCommand('stop-sensing');
+      const commandSent = await sendEsp32Command('stop-sensing');
       if (!commandSent) throw new Error('Failed to send stop-sensing command');
 
       const { data: sessionDetections, error: detectionError } = await supabase
@@ -467,7 +330,6 @@ const Insert = () => {
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setLastDetection(null);
       setRecentDetections([]);
-      setSessionInitiated(false);
     } catch (error) {
       console.error('[Insert.jsx] Stop error:', error);
       setAlert({ type: 'error', message: `Stop failed: ${error.message}` });
@@ -487,10 +349,8 @@ const Insert = () => {
     return material === 'Plastic Bottle' ? '#3498db' : material === 'Can' ? '#e74c3c' : '#2ecc71';
   };
 
-  const getPusherStatusColor = () => {
-    if (pusherStatus === 'Connected') return '#2ecc71';
-    if (pusherStatus === 'Disconnected' || pusherStatus.includes('Error')) return '#e74c3c';
-    return '#f39c12';
+  const getConnectionStatusColor = () => {
+    return connectionStatus === 'Connected' ? '#2ecc71' : '#e74c3c';
   };
 
   return (
@@ -543,21 +403,10 @@ CREATE TABLE IF NOT EXISTS session_detections (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS device_control (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  device_id TEXT,
-  user_id UUID REFERENCES auth.users(id),
-  command TEXT,
-  session_id UUID,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  CONSTRAINT device_control_device_id_user_id_unique UNIQUE (device_id, user_id)
-);
-
 -- Enable RLS
 ALTER TABLE recyclables ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recycling_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_detections ENABLE ROW LEVEL SECURITY;
-ALTER TABLE device_control ENABLE ROW LEVEL SECURITY;
 
 -- Create RLS policies
 CREATE POLICY "Allow users to manage recyclables" ON recyclables
@@ -567,9 +416,6 @@ CREATE POLICY "Allow users to manage sessions" ON recycling_sessions
   FOR ALL USING (auth.uid() = user_id);
 
 CREATE POLICY "Allow users to manage detections" ON session_detections
-  FOR ALL USING (auth.uid() = user_id);
-
-CREATE POLICY "Allow users to manage device control" ON device_control
   FOR ALL USING (auth.uid() = user_id);
 `}
             </pre>
@@ -590,10 +436,10 @@ CREATE POLICY "Allow users to manage device control" ON device_control
 
             <div className="status-card">
               <div className="stat-label">
-                <FontAwesomeIcon icon={faSignal} /> Pusher Status
+                <FontAwesomeIcon icon={faSignal} /> ESP32 Connection
               </div>
-              <div className="stat-value" style={{ color: getPusherStatusColor() }}>
-                {pusherStatus}
+              <div className="stat-value" style={{ color: getConnectionStatusColor() }}>
+                {connectionStatus}
               </div>
             </div>
 
