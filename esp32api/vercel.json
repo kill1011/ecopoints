@@ -1,13 +1,15 @@
 {
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/esp32api/" }
-  ],
-  "headers": [
+  "version": 2,
+  "builds": [
     {
-      "source": "/(.*)\\.js",
-      "headers": [
-        { "key": "Content-Type", "value": "application/javascript" }
-      ]
+      "src": "api/esp32.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/esp32",
+      "dest": "api/esp32.js"
     }
   ]
 }
