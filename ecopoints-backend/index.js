@@ -21,14 +21,20 @@ const pusher = new Pusher({
 // Initialize Supabase
 const supabase = createClient(
   'https://welxjeybnoeeusehuoat.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.3Ifq9G2Pno2p1J4UwLWv-iq-Dr34ahXsk26hzQxgHEc');
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHxqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
+);
 
-// Simplified CORS configuration to allow all origins (temporary for debugging)
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-}));
+// Custom CORS middleware to ensure consistent headers
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', 'https://ecopoints-teal.vercel.app');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).send();
+  }
+  next();
+});
 
 app.use(express.json());
 
@@ -246,7 +252,7 @@ app.get('/api/realtime', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Match existing CORS
+  res.setHeader('Access-Control-Allow-Origin', 'https://ecopoints-teal.vercel.app');
 
   // Keep the connection alive by sending a comment every 15 seconds
   const keepAlive = setInterval(() => {
