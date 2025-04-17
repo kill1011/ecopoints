@@ -27,6 +27,7 @@ const Insert = () => {
   const [dbError, setDbError] = useState(false);
   const [lastDetection, setLastDetection] = useState(null);
   const [recentDetections, setRecentDetections] = useState([]);
+  const [commandStatus, setCommandStatus] = useState(null); // Track command acknowledgment
 
   useEffect(() => {
     console.log('[Insert.jsx] userData.id:', userData.id);
@@ -68,13 +69,52 @@ const Insert = () => {
               session_id: payload.new.session_id,
               user_id: payload.new.user_id,
               timestamp: payload.new.created_at,
+              id: payload.new.id, // Include detection ID for deduplication
             });
           }
         })
-        .subscribe();
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('[Insert.jsx] Real-time subscription active');
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            setAlert({ type: 'error', message: 'Real-time connection lost. Please restart the session.' });
+          }
+        });
       return () => supabase.removeChannel(subscription);
     }
   }, [userData.id, isSensing, currentSessionId]);
+
+  // Poll for command acknowledgment from ESP32
+  useEffect(() => {
+    let timeout;
+    if (isSensing && commandStatus === 'sent') {
+      timeout = setTimeout(async () => {
+        try {
+          const { data, error } = await supabase
+            .from('device_commands')
+            .select('command, created_at')
+            .eq('session_id', currentSessionId)
+            .eq('user_id', userData.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+          if (error) throw error;
+          if (data.length > 0 && data[0].command === 'start-sensing') {
+            setCommandStatus('confirmed');
+            setAlert({ type: 'success', message: 'ESP32 started sensing.' });
+          } else {
+            setCommandStatus('failed');
+            setAlert({ type: 'error', message: 'ESP32 did not respond. Please check the device.' });
+            await stopSensing(false); // Stop session if no response
+          }
+        } catch (error) {
+          console.error('[Insert.jsx] Command acknowledgment error:', error);
+          setCommandStatus('failed');
+          setAlert({ type: 'error', message: 'Failed to verify ESP32 response.' });
+        }
+      }, 10000); // Wait 10 seconds for ESP32 to process command
+    }
+    return () => clearTimeout(timeout);
+  }, [commandStatus, isSensing, currentSessionId, userData.id]);
 
   const sendEsp32Command = async (command, payload = {}) => {
     if (!userData.id || (command === 'start-sensing' && !currentSessionId)) {
@@ -84,7 +124,7 @@ const Insert = () => {
       return false;
     }
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('device_commands')
         .insert([
           {
@@ -94,10 +134,12 @@ const Insert = () => {
             command: command,
             created_at: new Date().toISOString(),
           },
-        ]);
+        ])
+        .select();
       if (error) throw error;
-      console.log('[Insert.jsx] Command sent to Supabase:', command);
-      setAlert({ type: 'success', message: `Command ${command} sent successfully` });
+      console.log('[Insert.jsx] Command sent to Supabase:', command, data);
+      setCommandStatus(command === 'start-sensing' ? 'sent' : null);
+      setAlert({ type: 'info', message: `Command ${command} sent. Awaiting ESP32 response...` });
       return true;
     } catch (error) {
       console.error('[Insert.jsx] Command error:', error);
@@ -109,14 +151,22 @@ const Insert = () => {
   const handleNewDetection = async (data) => {
     if (!isSensing) return;
 
-    const { material, quantity, session_id } = data;
+    const { material, quantity, session_id, id } = data;
     console.log('[Insert.jsx] Received detection:', data);
+
+    // Validate material and session
     if (!['Plastic Bottle', 'Can'].includes(material)) {
       console.warn('[Insert.jsx] Invalid material:', material);
       return;
     }
     if (session_id !== currentSessionId) {
       console.warn('[Insert.jsx] Detection for wrong session:', { received: session_id, expected: currentSessionId });
+      return;
+    }
+
+    // Deduplicate detections by ID
+    if (recentDetections.some((d) => d.id === id)) {
+      console.warn('[Insert.jsx] Duplicate detection ignored:', id);
       return;
     }
 
@@ -128,16 +178,17 @@ const Insert = () => {
       material,
       quantity,
       timestamp: new Date(data.timestamp).toLocaleTimeString(),
+      id,
     });
     setRecentDetections((prev) => [
-      { material, quantity, timestamp: new Date(data.timestamp).toLocaleTimeString() },
+      { material, quantity, timestamp: new Date(data.timestamp).toLocaleTimeString(), id },
       ...prev.slice(0, 9),
     ]);
     setAlert({
       type: 'success',
       message: `Detected: ${material} (${quantity})`,
     });
-    console.log('[Insert.jsx] Detection processed:', { material, quantity });
+    console.log('[Insert.jsx] Detection processed:', { material, quantity, id });
   };
 
   const fetchSessions = async () => {
@@ -168,6 +219,13 @@ const Insert = () => {
     }
     setIsLoading(true);
     try {
+      // Clear any existing commands for this user and device to avoid conflicts
+      await supabase
+        .from('device_commands')
+        .delete()
+        .eq('user_id', userData.id)
+        .eq('device_id', 'esp32-cam-1');
+
       const { data: sessionData, error: sessionError } = await supabase
         .from('recycling_sessions')
         .insert([
@@ -283,12 +341,20 @@ const Insert = () => {
         setAlert({ type: 'info', message: 'Session stopped. Detections discarded.' });
       }
 
+      // Clear session detections
       const { error: clearError } = await supabase
         .from('session_detections')
         .delete()
         .eq('session_id', currentSessionId)
         .eq('user_id', userData.id);
       if (clearError) throw clearError;
+
+      // Clear commands to prevent stale commands
+      await supabase
+        .from('device_commands')
+        .delete()
+        .eq('user_id', userData.id)
+        .eq('device_id', 'esp32-cam-1');
 
       if (shouldSave) await fetchSessions();
 
@@ -298,6 +364,7 @@ const Insert = () => {
       setLiveCounts({ 'Plastic Bottle': 0, 'Can': 0 });
       setLastDetection(null);
       setRecentDetections([]);
+      setCommandStatus(null);
     } catch (error) {
       console.error('[Insert.jsx] Stop error:', error);
       setAlert({ type: 'error', message: `Stop failed: ${error.message}` });
