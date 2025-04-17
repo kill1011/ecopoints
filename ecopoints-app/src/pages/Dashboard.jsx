@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faExchangeAlt, faHistory, faUser, faList } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faExchangeAlt, faUser, faList } from '@fortawesome/free-solid-svg-icons';
 import '../styles/Dashboard.css';
 import { supabase } from '../config/supabase';
 import Header from '../components/Header';
@@ -79,6 +79,7 @@ const Dashboard = () => {
             .insert([{
               id: session.user.id,
               name: session.user.user_metadata?.name || 'Guest',
+              email: session.user.email || 'guest@example.com',
               points: 0,
               money: 0,
               bottles: 0,
