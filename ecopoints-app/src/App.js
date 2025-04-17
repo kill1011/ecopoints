@@ -17,7 +17,7 @@ import ViewAll from './admin/ViewAll';
 import { supabase } from './config/supabase';
 import { AuthProvider } from './context/AuthContext';
 
-const API_URL = process.env.REACT_APP_API_URL || "https://ecopoints-api.vercel.app";
+const API_URL = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercel.app';
 
 function App() {
   const [data, setData] = useState(null);
