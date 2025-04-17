@@ -1,9 +1,10 @@
 {
-  "name": "recyclables-project",
+  "name": "esp32api",
   "version": "1.0.0",
   "description": "ESP32 Recyclables Detection System",
   "main": "index.js",
   "scripts": {
+    "vercel-build": "npm install",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
