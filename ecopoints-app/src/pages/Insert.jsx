@@ -22,6 +22,7 @@ const Insert = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [detections, setDetections] = useState([]);
   const [dbError, setDbError] = useState(false);
+  const [deviceConnected, setDeviceConnected] = useState(false);
 
   useEffect(() => {
     checkDeviceStatus();
@@ -44,9 +45,13 @@ const Insert = () => {
       )
       .subscribe();
 
+    // Periodically check if device is sending data
+    const interval = setInterval(checkDeviceActivity, 30000);
+
     return () => {
       supabase.removeChannel(subscription);
       supabase.removeChannel(detectionsSubscription);
+      clearInterval(interval);
     };
   }, []);
 
@@ -71,6 +76,7 @@ const Insert = () => {
         const isActive = data[0].command === 'start';
         setIsSensing(isActive);
         setSystemStatus(isActive ? 'Scanning...' : 'Idle');
+        setDeviceConnected(true);
       }
 
       fetchRecentDetections();
@@ -80,6 +86,31 @@ const Insert = () => {
         type: 'error',
         message: error.message,
       });
+    }
+  };
+
+  const checkDeviceActivity = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('recyclables')
+        .select('created_at')
+        .eq('device_id', 'esp32-cam-1')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const lastActivity = new Date(data[0].created_at);
+        const now = new Date();
+        const diffMinutes = (now - lastActivity) / (1000 * 60);
+        setDeviceConnected(diffMinutes < 5); // Consider device connected if activity within 5 minutes
+      } else {
+        setDeviceConnected(false);
+      }
+    } catch (error) {
+      console.error('Error checking device activity:', error);
+      setDeviceConnected(false);
     }
   };
 
@@ -125,11 +156,12 @@ const Insert = () => {
         type: 'success',
         message: `New detection: ${newDetection.material} (${newDetection.quantity}, Confidence: ${newDetection.confidence.toFixed(2)})`,
       });
+      setDeviceConnected(true);
     }
   };
 
   const startSensing = async () => {
-    if (isSensing || isLoading || dbError) return;
+    if (isSensing || isLoading || dbError || !deviceConnected) return;
     setIsLoading(true);
 
     try {
@@ -252,6 +284,12 @@ CREATE POLICY "Allow all operations on recyclables"
           <div className="stat-value" style={{ color: isSensing ? '#4caf50' : '#666' }}>
             {systemStatus}
           </div>
+          <div className="stat-label">
+            Device Connection
+          </div>
+          <div className="stat-value" style={{ color: deviceConnected ? '#4caf50' : '#f44336' }}>
+            {deviceConnected ? 'Connected' : 'Disconnected'}
+          </div>
         </div>
 
         <div className="control-card">
@@ -260,7 +298,7 @@ CREATE POLICY "Allow all operations on recyclables"
               type="button"
               className="control-btn start-btn"
               onClick={startSensing}
-              disabled={isSensing || isLoading || dbError}
+              disabled={isSensing || isLoading || dbError || !deviceConnected}
             >
               <FontAwesomeIcon icon={faPlay} /> {isLoading ? 'Starting...' : 'Start Sensing'}
             </button>
