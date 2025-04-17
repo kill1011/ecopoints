@@ -6,34 +6,36 @@ import bcrypt from 'bcrypt';
 import Pusher from 'pusher';
 import { createClient } from '@supabase/supabase-js';
 
+// Load environment variables
 dotenv.config();
 
 const app = express();
 
-// Initialize Pusher
+// Initialize Pusher with environment variables
 const pusher = new Pusher({
-  appId: '1975965',
-  key: '0b19c0609da3c9a06820',
-  secret: '542264cd1f75cd43faa9',
-  cluster: 'ap1',
+  appId: process.env.PUSHER_APP_ID || '1975965',
+  key: process.env.PUSHER_KEY || '0b19c0609da3c9a06820',
+  secret: process.env.PUSHER_SECRET || '542264cd1f75cd43faa9',
+  cluster: process.env.PUSHER_CLUSTER || 'ap1',
 });
 
 // Initialize Supabase
 const supabase = createClient(
-  'https://welxjeybnoeeusehuoat.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
+  process.env.SUPABASE_URL || 'https://welxjeybnoeeusehuoat.supabase.co',
+  process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
 );
 
-// Simplified CORS configuration to allow all origins (temporary for debugging)
+// CORS configuration for Vercel
 app.use(cors({
-  origin: '*',
+  origin: process.env.CORS_ORIGIN || '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
 
+// JSON parsing middleware
 app.use(express.json());
 
-// Simple root endpoint
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({ message: 'EcoPoints API is running' });
 });
@@ -79,7 +81,7 @@ app.post('/api/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: user.id, is_admin: user.is_admin },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'default-secret',
       { expiresIn: '24h' }
     );
 
@@ -227,7 +229,7 @@ app.get('/api/get-command', async (req, res) => {
   }
 });
 
-// Error handling for unhandled routes
+// Handle 404 errors
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
@@ -241,5 +243,5 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Export the app for Vercel serverless deployment
+// Export for Vercel serverless
 export default app;

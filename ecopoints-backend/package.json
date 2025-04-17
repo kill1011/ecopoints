@@ -1,43 +1,17 @@
 {
-  "name": "ecopoints-backend",
+  "name": "ecopoints-api",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
-    "start": "node --no-deprecation index.js",
-    "dev": "nodemon --no-deprecation index.js"
-    
+    "start": "node index.js"
   },
-    "channel": "commands",
-    "event": "device-command",
-    "data": {
-      "device_id": "esp32-cam-1",
-      "user_id": "test-user-id",
-      "session_id": "test-session-id",
-      "command": "start-sensing",
-      "timestamp": "2025-04-16T12:00:00Z"
-    },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@fortawesome/free-solid-svg-icons": "^6.7.2",
-    "@fortawesome/react-fontawesome": "^0.2.2",
-    "@supabase/supabase-js": "^2.49.4",
-    "bcrypt": "^5.1.1",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^5.1.0",
-    "express-rate-limit": "^7.5.0",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.13.2",
-    "nodemon": "^3.1.9",
-    "pusher": "^5.2.0",
-    "pusher-js": "^8.4.0",
-    "supabase": "^2.20.12"
-  },
-  "engines": {
-    "node": "18.x"
+    "dotenv": "^16.0.3",
+    "jsonwebtoken": "^9.0.0",
+    "bcrypt": "^5.1.0",
+    "pusher": "^5.1.3",
+    "@supabase/supabase-js": "^2.39.0"
   }
 }
