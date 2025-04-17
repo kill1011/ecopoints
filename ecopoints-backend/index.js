@@ -10,32 +10,19 @@ dotenv.config();
 
 const app = express();
 
-// Initialize services with error handling and optional fallback
-let pusher = null;
-try {
-  pusher = new Pusher({
-    appId: process.env.PUSHER_APP_ID || '1975965',
-    key: process.env.PUSHER_KEY || '0b19c0609da3c9a06820',
-    secret: process.env.PUSHER_SECRET || '542264cd1f75cd43faa9', // Replace with full secret or env var
-    cluster: process.env.PUSHER_CLUSTER || 'ap1',
-  });
-  console.log('Pusher initialized successfully');
-} catch (error) {
-  console.warn('Pusher initialization failed, proceeding without Pusher:', error.message);
-  pusher = null; // Allow app to run without Pusher
-}
+// Initialize Pusher
+const pusher = new Pusher({
+  appId: '1975965',
+  key: '0b19c0609da3c9a06820',
+  secret: '542264cd43faa9',
+  cluster: 'ap1',
+});
 
-let supabase = null;
-try {
-  supabase = createClient(
-    process.env.SUPABASE_URL || 'https://welxjeybnoeeusehuoat.supabase.co',
-    process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHxqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
-  );
-  console.log('Supabase initialized successfully');
-} catch (error) {
-  console.warn('Supabase initialization failed, proceeding without Supabase:', error.message);
-  supabase = null; // Allow app to run without Supabase
-}
+// Initialize Supabase
+const supabase = createClient(
+  'https://welxjeybnoeeusehuoat.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHxqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDExODM3MiwiZXhwIjoyMDU5Njk0MzcyfQ.1V5L4-T0T-kv6oZ7s1bzQjZ7Z5eZ7Z5eZ7Z5eZ7Z5eZ'
+);
 
 // Enhanced custom CORS middleware with logging
 app.use((req, res, next) => {
@@ -44,7 +31,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Vary', 'Origin');
+  res.setHeader('Vary', 'Origin'); // Helps with caching and origin handling
   if (req.method === 'OPTIONS') {
     console.log('Handling OPTIONS preflight request');
     return res.status(204).send();
@@ -54,29 +41,28 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// Health check endpoint to confirm server status
+// Simple root endpoint
+app.get('/', (req, res) => {
+  res.json({ message: 'EcoPoints API is running' });
+});
+
+// Health check endpoint
 app.get('/api/health', (req, res) => {
   console.log('Health check received from:', req.headers.origin);
   try {
-    const healthStatus = {
+    res.json({ 
       status: 'ok',
       server: 'running',
-      timestamp: new Date().toISOString(),
-      pusher: pusher ? 'available' : 'unavailable',
-      supabase: supabase ? 'available' : 'unavailable',
-    };
-    res.json(healthStatus);
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Health check error:', error);
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
-// Login endpoint (only if Supabase is available)
+// Login endpoint
 app.post('/api/login', async (req, res) => {
-  if (!supabase) {
-    return res.status(503).json({ message: 'Supabase service unavailable' });
-  }
   const { email, password } = req.body;
   
   try {
@@ -101,7 +87,7 @@ app.post('/api/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: user.id, is_admin: user.is_admin },
-      process.env.JWT_SECRET || 'qCspgluLFqmeaL+pWy5ALCnkZIqbRm5UV/AIHEf0SCnugmX63Umtgo6MyXsoX9F/JDJOrZSlNn/9XU1nFdnnIw==',
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
@@ -121,16 +107,14 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Signup endpoint (only if Supabase is available)
+// Signup endpoint
 app.post('/api/auth/signup', async (req, res) => {
-  if (!supabase) {
-    return res.status(503).json({ message: 'Supabase service unavailable' });
-  }
   const { email, password, name } = req.body;
 
   try {
     console.log('Starting signup for:', email);
 
+    // Check if user already exists
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -141,6 +125,7 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
+    // Create auth user in Supabase
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -149,9 +134,11 @@ app.post('/api/auth/signup', async (req, res) => {
 
     if (authError) throw authError;
 
+    // Hash password for users table
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Create user profile
     const { data: profileData, error: profileError } = await supabase
       .from('users')
       .insert([{
@@ -182,11 +169,8 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// Trigger Pusher endpoint (only if Pusher is available)
+// Trigger Pusher endpoint
 app.post('/api/trigger-pusher', async (req, res) => {
-  if (!pusher) {
-    return res.status(503).json({ message: 'Pusher service unavailable' });
-  }
   const { channel, event, data } = req.body;
 
   if (!channel || !event || !data) {
@@ -194,22 +178,22 @@ app.post('/api/trigger-pusher', async (req, res) => {
   }
 
   try {
-    if (supabase) {
-      const { error: dbError } = await supabase
-        .from('device_control')
-        .upsert(
-          {
-            device_id: data.device_id,
-            user_id: data.user_id,
-            command: data.command,
-            session_id: data.session_id,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: ['device_id', 'user_id'] }
-        );
-      if (dbError) throw dbError;
-    }
+    // Insert command into Supabase device_control table
+    const { error: dbError } = await supabase
+      .from('device_control')
+      .upsert(
+        {
+          device_id: data.device_id,
+          user_id: data.user_id,
+          command: data.command,
+          session_id: data.session_id,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: ['device_id', 'user_id'] }
+      );
+    if (dbError) throw dbError;
 
+    // Trigger Pusher event
     await pusher.trigger(channel, event, data);
     res.status(200).json({ message: 'Event triggered and command saved successfully' });
   } catch (error) {
@@ -218,11 +202,8 @@ app.post('/api/trigger-pusher', async (req, res) => {
   }
 });
 
-// Endpoint for ESP32 to fetch the latest command (only if Supabase is available)
+// Endpoint for ESP32 to fetch the latest command
 app.get('/api/get-command', async (req, res) => {
-  if (!supabase) {
-    return res.status(503).json({ message: 'Supabase service unavailable' });
-  }
   const { device_id, user_id } = req.query;
 
   if (!device_id || !user_id) {
@@ -270,57 +251,60 @@ app.use((err, req, res, next) => {
 
 // NEW: Add Server-Sent Events (SSE) endpoint for backend-to-frontend connection
 app.get('/api/realtime', async (req, res) => {
+  // Set headers for Server-Sent Events
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', 'https://ecopoints-teal.vercel.app');
 
+  // Keep the connection alive by sending a comment every 15 seconds
   const keepAlive = setInterval(() => {
     res.write(':keep-alive\n\n');
   }, 15000);
 
+  // Function to send data to the frontend
   const sendEvent = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  // Initial message to confirm connection
   sendEvent({ message: 'Connected to backend real-time updates' });
 
+  // Poll Supabase for updates in the device_control table
   let lastUpdatedAt = null;
   const pollInterval = setInterval(async () => {
     try {
-      if (supabase) {
-        const { device_id = 'esp32-cam-1', user_id = 'test-user' } = req.query;
-        const { data, error } = await supabase
-          .from('device_control')
-          .select('command, session_id, updated_at')
-          .eq('device_id', device_id)
-          .eq('user_id', user_id)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .single();
+      const { device_id = 'esp32-cam-1', user_id = 'test-user' } = req.query;
+      const { data, error } = await supabase
+        .from('device_control')
+        .select('command, session_id, updated_at')
+        .eq('device_id', device_id)
+        .eq('user_id', user_id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .single();
 
-        if (error || !data) {
-          sendEvent({ status: 'idle', message: 'No active command', lastUpdated: new Date().toISOString() });
-          return;
-        }
+      if (error || !data) {
+        sendEvent({ status: 'idle', message: 'No active command', lastUpdated: new Date().toISOString() });
+        return;
+      }
 
-        if (lastUpdatedAt !== data.updated_at) {
-          lastUpdatedAt = data.updated_at;
-          sendEvent({
-            status: data.command === 'start-sensing' ? 'sensing' : 'idle',
-            sessionId: data.session_id,
-            lastUpdated: data.updated_at,
-          });
-        }
-      } else {
-        sendEvent({ status: 'idle', message: 'Supabase unavailable' });
+      // Only send updates if the data has changed
+      if (lastUpdatedAt !== data.updated_at) {
+        lastUpdatedAt = data.updated_at;
+        sendEvent({
+          status: data.command === 'start-sensing' ? 'sensing' : 'idle',
+          sessionId: data.session_id,
+          lastUpdated: data.updated_at,
+        });
       }
     } catch (error) {
       console.error('Real-time polling error:', error);
       sendEvent({ status: 'error', message: 'Failed to fetch updates' });
     }
-  }, 5000);
+  }, 5000); // Poll every 5 seconds
 
+  // Handle client disconnect
   req.on('close', () => {
     clearInterval(pollInterval);
     clearInterval(keepAlive);
@@ -328,4 +312,5 @@ app.get('/api/realtime', async (req, res) => {
   });
 });
 
+// Export the app for Vercel serverless deployment
 export default app;
