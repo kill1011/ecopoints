@@ -45,7 +45,6 @@ const Insert = () => {
       )
       .subscribe();
 
-    // Periodically check if device is sending data
     const interval = setInterval(checkDeviceActivity, 30000);
 
     return () => {
@@ -65,9 +64,9 @@ const Insert = () => {
         .limit(1);
 
       if (error) {
-        if (error.message.includes('does not exist')) {
+        if (error.code === 'PGRST301' || error.message.includes('does not exist')) {
           setDbError(true);
-          throw new Error("Database tables don't exist.");
+          throw new Error("Database tables not initialized. Please set up the database.");
         }
         throw error;
       }
@@ -77,9 +76,12 @@ const Insert = () => {
         setIsSensing(isActive);
         setSystemStatus(isActive ? 'Scanning...' : 'Idle');
         setDeviceConnected(true);
+      } else {
+        setSystemStatus('Idle');
+        setIsSensing(false);
       }
 
-      fetchRecentDetections();
+      await fetchRecentDetections();
     } catch (error) {
       console.error('Error checking device status:', error);
       setAlert({
@@ -104,7 +106,7 @@ const Insert = () => {
         const lastActivity = new Date(data[0].created_at);
         const now = new Date();
         const diffMinutes = (now - lastActivity) / (1000 * 60);
-        setDeviceConnected(diffMinutes < 5); // Consider device connected if activity within 5 minutes
+        setDeviceConnected(diffMinutes < 5);
       } else {
         setDeviceConnected(false);
       }
@@ -127,9 +129,7 @@ const Insert = () => {
 
       if (error) throw error;
 
-      if (data) {
-        setDetections(data);
-      }
+      setDetections(data || []);
     } catch (error) {
       console.error('Error fetching detections:', error);
     }
@@ -161,7 +161,13 @@ const Insert = () => {
   };
 
   const startSensing = async () => {
-    if (isSensing || isLoading || dbError || !deviceConnected) return;
+    if (isSensing || isLoading || dbError || !deviceConnected) {
+      setAlert({
+        type: 'error',
+        message: isSensing ? 'Sensor already running' : !deviceConnected ? 'Device not connected' : 'Database not initialized',
+      });
+      return;
+    }
     setIsLoading(true);
 
     try {
@@ -190,7 +196,13 @@ const Insert = () => {
   };
 
   const stopSensing = async () => {
-    if (!isSensing || isLoading || dbError) return;
+    if (!isSensing || isLoading || dbError) {
+      setAlert({
+        type: 'error',
+        message: !isSensing ? 'Sensor not running' : 'Database not initialized',
+      });
+      return;
+    }
     setIsLoading(true);
 
     try {
