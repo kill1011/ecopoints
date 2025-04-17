@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faPlay, faStop, faHistory, faList, faCheck, faBottleWater, faBeer, faSignal } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faPlay, faStop, faHistory, faList, faCheck, faBottleWater, faBeer } from '@fortawesome/free-solid-svg-icons';
 import { createClient } from '@supabase/supabase-js';
 import '../styles/Insert.css';
 
@@ -9,9 +9,6 @@ import '../styles/Insert.css';
 const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-// ESP32 API URL (replace with your ESP32's IP address)
-const esp32ApiUrl = "http://<ESP32_IP_ADDRESS>";
 
 const Insert = () => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -30,7 +27,6 @@ const Insert = () => {
   const [dbError, setDbError] = useState(false);
   const [lastDetection, setLastDetection] = useState(null);
   const [recentDetections, setRecentDetections] = useState([]);
-  const [connectionStatus, setConnectionStatus] = useState('Disconnected');
 
   useEffect(() => {
     console.log('[Insert.jsx] userData.id:', userData.id);
@@ -45,6 +41,7 @@ const Insert = () => {
           supabase.from('recyclables').select('id').limit(1),
           supabase.from('recycling_sessions').select('id').limit(1),
           supabase.from('session_detections').select('id').limit(1),
+          supabase.from('device_commands').select('id').limit(1),
         ]);
         console.log('[Insert.jsx] Schema verified');
       } catch (error) {
@@ -59,55 +56,24 @@ const Insert = () => {
       fetchSessions();
     }
 
-    // Check ESP32 connection
-    const checkEsp32 = async () => {
-      try {
-        const response = await fetch(`${esp32ApiUrl}/api/status`);
-        if (response.ok) {
-          setConnectionStatus('Connected');
-        } else {
-          throw new Error('ESP32 not reachable');
-        }
-      } catch (error) {
-        console.error('[Insert.jsx] ESP32 connection error:', error);
-        setConnectionStatus('Disconnected');
-        setAlert({ type: 'warning', message: 'Cannot connect to ESP32. Check network or IP address.' });
-      }
-    };
-    checkEsp32();
-
-    // Polling for new detections when sensing
-    let pollInterval;
+    // Real-time subscription for detections
     if (isSensing && currentSessionId && userData.id) {
-      pollInterval = setInterval(async () => {
-        try {
-          const { data, error } = await supabase
-            .from('session_detections')
-            .select('material, quantity, created_at')
-            .eq('session_id', currentSessionId)
-            .eq('user_id', userData.id)
-            .order('created_at', { ascending: false })
-            .limit(1);
-          if (error) throw error;
-          if (data && data.length > 0) {
-            const detection = data[0];
+      const subscription = supabase
+        .channel('session_detections')
+        .on('INSERT', (payload) => {
+          if (payload.new.session_id === currentSessionId && payload.new.user_id === userData.id) {
             handleNewDetection({
-              material: detection.material,
-              quantity: detection.quantity,
-              session_id: currentSessionId,
-              user_id: userData.id,
-              timestamp: detection.created_at,
+              material: payload.new.material,
+              quantity: payload.new.quantity,
+              session_id: payload.new.session_id,
+              user_id: payload.new.user_id,
+              timestamp: payload.new.created_at,
             });
           }
-        } catch (error) {
-          console.error('[Insert.jsx] Polling error:', error);
-        }
-      }, 5000);
+        })
+        .subscribe();
+      return () => supabase.removeChannel(subscription);
     }
-
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
-    };
   }, [userData.id, isSensing, currentSessionId]);
 
   const sendEsp32Command = async (command, payload = {}) => {
@@ -118,17 +84,19 @@ const Insert = () => {
       return false;
     }
     try {
-      const url = command === 'start-sensing' ? `${esp32ApiUrl}/api/start-sensing` : `${esp32ApiUrl}/api/stop-sensing`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || `HTTP error: ${response.status}`);
-      }
-      console.log('[Insert.jsx] Command sent successfully:', result);
+      const { error } = await supabase
+        .from('device_commands')
+        .insert([
+          {
+            device_id: 'esp32-cam-1',
+            user_id: userData.id,
+            session_id: currentSessionId,
+            command: command,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      if (error) throw error;
+      console.log('[Insert.jsx] Command sent to Supabase:', command);
       setAlert({ type: 'success', message: `Command ${command} sent successfully` });
       return true;
     } catch (error) {
@@ -349,10 +317,6 @@ const Insert = () => {
     return material === 'Plastic Bottle' ? '#3498db' : material === 'Can' ? '#e74c3c' : '#2ecc71';
   };
 
-  const getConnectionStatusColor = () => {
-    return connectionStatus === 'Connected' ? '#2ecc71' : '#e74c3c';
-  };
-
   return (
     <Layout title="Insert Recyclables">
       <div className="insert-container">
@@ -403,10 +367,20 @@ CREATE TABLE IF NOT EXISTS session_detections (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS device_commands (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id TEXT,
+  user_id UUID REFERENCES auth.users(id),
+  session_id UUID,
+  command TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Enable RLS
 ALTER TABLE recyclables ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recycling_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_detections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_commands ENABLE ROW LEVEL SECURITY;
 
 -- Create RLS policies
 CREATE POLICY "Allow users to manage recyclables" ON recyclables
@@ -416,6 +390,9 @@ CREATE POLICY "Allow users to manage sessions" ON recycling_sessions
   FOR ALL USING (auth.uid() = user_id);
 
 CREATE POLICY "Allow users to manage detections" ON session_detections
+  FOR ALL USING (auth.uid() = user_id);
+
+CREATE POLICY "Allow users to manage commands" ON device_commands
   FOR ALL USING (auth.uid() = user_id);
 `}
             </pre>
@@ -432,15 +409,6 @@ CREATE POLICY "Allow users to manage detections" ON session_detections
                 <FontAwesomeIcon icon={faRecycle} /> Sensor Status
               </div>
               <div className="stat-value">{systemStatus}</div>
-            </div>
-
-            <div className="status-card">
-              <div className="stat-label">
-                <FontAwesomeIcon icon={faSignal} /> ESP32 Connection
-              </div>
-              <div className="stat-value" style={{ color: getConnectionStatusColor() }}>
-                {connectionStatus}
-              </div>
             </div>
 
             <div className="control-card">
