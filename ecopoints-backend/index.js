@@ -3,214 +3,96 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import Pusher from 'pusher';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
+app.use(cors());
 
-const pusher = new Pusher({
-    appId: process.env.PUSHER_APP_ID || '1975965',
-    key: process.env.PUSHER_KEY || '0b19c0609da3c9a06820',
-    secret: process.env.PUSHER_SECRET || '542264cd1f75cd43faa9',
-    cluster: process.env.PUSHER_CLUSTER || 'ap1',
-});
+export default async function handler(req, res) {
+  // Ensure POST request
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-const supabase = createClient(
-    process.env.SUPABASE_URL || 'https://welxjeybnoeeusehuoat.supabase.co',
-    process.env.SUPABASE_KEY || 'your-actual-service-role-key'
-);
+  const { email, password, name } = req.body;
 
-app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-}));
+  // Validate input
+  if (!email || !password || !name) {
+    return res.status(400).json({ error: 'Email, password, and name are required' });
+  }
 
-app.use(express.json());
+  // Initialize Supabase client with service role key
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
 
-app.get('/', (req, res) => {
-    res.json({ message: 'EcoPoints API is running' });
-});
-
-app.get('/api/health', (req, res) => {
-    console.log('Health check received from:', req.headers.origin);
-    try {
-        res.json({ 
-            status: 'ok',
-            server: 'running',
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        console.error('Health check error:', error);
-        res.status(500).json({ status: 'error', message: error.message });
-    }
-});
-
-app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        console.log('Login attempt for:', email);
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', email)
-            .single();
-        if (error || !user) {
-            console.log('Login failed: User not found');
-            return res.status(401).json({ message: 'Invalid credentials' });
-        }
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) {
-            console.log('Login failed: Invalid password');
-            return res.status(401).json({ message: 'Invalid credentials' });
-        }
-        const token = jwt.sign(
-            { id: user.id, is_admin: user.is_admin },
-            process.env.JWT_SECRET || 'default-secret',
-            { expiresIn: '24h' }
-        );
-        console.log('Login successful for:', email);
-        res.json({
-            token,
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                is_admin: user.is_admin
-            }
-        });
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ message: 'Server error during login' });
-    }
-});
-
-app.post('/api/auth/signup', async (req, res) => {
-    const { email, password, name } = req.body;
-    try {
-        console.log('Starting signup for:', email);
-        const { data: existingUser } = await supabase
-            .from('users')
-            .select('email')
-            .eq('email', email)
-            .single();
-        if (existingUser) {
-            return res.status(400).json({ message: 'Email already registered' });
-        }
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-            email,
-            password,
-            options: { data: { name } }
-        });
-        if (authError) throw authError;
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        const { data: profileData, error: profileError } = await supabase
-            .from('users')
-            .insert([{
-                id: authData.user.id,
-                email: email,
-                name: name,
-                password: hashedPassword,
-                points: 0,
-                money: 0,
-                is_admin: false
-            }])
-            .single();
-        if (profileError) throw profileError;
-        console.log('Signup successful for:', email);
-        res.status(201).json({
-            message: 'Registration successful!',
-            user: authData.user
-        });
-    } catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({
-            message: 'Registration failed',
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/trigger-pusher', async (req, res) => {
-    const { channel, event, data } = req.body;
-    console.log('Received trigger-pusher request:', { channel, event, data });
-    if (!channel || !event || !data) {
-        console.warn('Missing channel, event, or data in trigger-pusher request');
-        return res.status(400).json({ error: 'Missing channel, event, or data' });
-    }
-    try {
-        const { error: dbError } = await supabase
-            .from('device_control')
-            .upsert(
-                {
-                    device_id: data.device_id,
-                    user_id: data.user_id,
-                    command: data.command,
-                    session_id: data.session_id,
-                    updated_at: new Date().toISOString(),
-                },
-                { onConflict: ['device_id', 'user_id'] }
-            );
-        if (dbError) throw dbError;
-        await pusher.trigger(channel, event, data);
-        console.log('Pusher event triggered:', { channel, event, data });
-        res.status(200).json({ message: 'Event triggered and command saved successfully' });
-    } catch (error) {
-        console.error('Error in trigger-pusher:', error);
-        res.status(500).json({ error: 'Failed to process request', details: error.message });
-    }
-});
-
-app.get('/api/get-command', async (req, res) => {
-    const { device_id, user_id } = req.query;
-    console.log('Received get-command request:', { device_id, user_id, origin: req.headers.origin });
-    if (!device_id || !user_id) {
-        console.warn('Missing device_id or user_id in get-command request');
-        return res.status(400).json({ error: 'Missing device_id or user_id' });
-    }
-    try {
-        const { data, error } = await supabase
-            .from('device_control')
-            .select('command, session_id, updated_at')
-            .eq('device_id', device_id)
-            .eq('user_id', user_id)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .single();
-        console.log('Supabase query result:', { data, error });
-        if (error) {
-            console.warn('Supabase error:', error.message);
-            return res.status(404).json({ error: 'No command found', details: error.message });
-        }
-        if (!data) {
-            console.warn('No command found for:', { device_id, user_id });
-            return res.status(404).json({ error: 'No command found' });
-        }
-        console.log('Returning command:', { command: data.command, session_id: data.session_id });
-        res.status(200).json({
-            command: data.command,
-            session_id: data.session_id,
-            updated_at: data.updated_at,
-        });
-    } catch (error) {
-        console.error('Error fetching command:', error);
-        res.status(500).json({ error: 'Failed to fetch command', details: error.message });
-    }
-});
-
-app.use((req, res) => {
-    res.status(404).json({ message: 'Route not found' });
-});
-
-app.use((err, req, res, next) => {
-    console.error('Global error:', err);
-    res.status(500).json({ 
-        error: 'Internal server error',
-        details: err.message
+  try {
+    // Create user in auth.users
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { name },
+      email_confirm: true, // Auto-confirm email to match disabled confirmation
     });
-});
 
-export default app;
+    if (authError) {
+      console.error('Auth error:', authError);
+      return res.status(500).json({ error: authError.message || 'Failed to create auth user' });
+    }
+
+    if (!authData.user) {
+      console.error('No user created:', authData);
+      return res.status(500).json({ error: 'No user created' });
+    }
+
+    // Insert into users table
+    const isAdmin = email.endsWith('PCCECOPOINTS@ecopoints.com');
+    const { error: profileError } = await supabase
+      .from('users')
+      .insert({
+        id: authData.user.id,
+        email,
+        name,
+        points: 0,
+        money: 0,
+        is_admin: isAdmin,
+      });
+
+    if (profileError) {
+      console.error('Profile error:', profileError);
+      // Optionally delete auth user if profile insert fails
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(500).json({ error: profileError.message || 'Failed to create user profile' });
+    }
+
+    // Generate session for client
+    const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      return res.status(500).json({ error: sessionError.message || 'Failed to create session' });
+    }
+
+    return res.status(200).json({
+      user: {
+        id: authData.user.id,
+        email: authData.user.email,
+        name: authData.user.user_metadata.name,
+      },
+      session: {
+        access_token: sessionData.session.access_token,
+        expires_at: sessionData.session.expires_at,
+      },
+    });
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    return res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+

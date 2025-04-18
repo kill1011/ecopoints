@@ -16,8 +16,6 @@ const LoginPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -70,55 +68,54 @@ const LoginPage = () => {
             message: testError.message,
             code: testError.code,
             details: testError.details,
+            timestamp: new Date().toISOString(),
           } : null,
         });
 
         console.log('Attempting signup with:', formData.email);
+
+        // Call Edge Function with retries
         let signupData = null;
         let signupError = null;
-
-        // Retry signup up to 3 times
         for (let attempt = 1; attempt <= 3; attempt++) {
           console.log(`Signup attempt ${attempt}...`);
           try {
             const startTime = Date.now();
-            const { data, error } = await supabase.auth.signUp({
-              email: formData.email,
-              password: formData.password,
-              options: {
-                data: { name: formData.name },
-              },
+            const response = await fetch('https://new-project-id.supabase.co/functions/v1/signup-user', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: formData.email,
+                password: formData.password,
+                name: formData.name,
+              }),
             });
 
+            const result = await response.json();
             console.log('Signup request duration:', Date.now() - startTime, 'ms');
 
-            signupData = data;
-            signupError = error;
+            if (!response.ok) {
+              console.error('Signup response error:', result);
+              signupError = { message: result.error || 'Failed to create account' };
+              if (result.error?.includes('already registered')) {
+                throw new Error('Email already registered. Please log in or use a different email.');
+              }
+              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
+              continue;
+            }
 
-            console.log('SignUp Response:', {
-              user: data?.user ? {
-                id: data.user.id,
-                email: data.user.email,
-                created_at: data.user.created_at,
-              } : null,
-              session: data?.session ? {
-                access_token: data.session.access_token?.slice(0, 10) + '...',
-                expires_at: data.session.expires_at,
-              } : null,
-              error: error ? {
-                message: error.message,
-                code: error.code,
-                status: error.status,
-                details: error.details,
+            signupData = result;
+            signupError = null;
+            console.log('Signup Response:', {
+              user: signupData.user,
+              session: signupData.session ? {
+                access_token: signupData.session.access_token?.slice(0, 10) + '...',
+                expires_at: signupData.session.expires_at,
               } : null,
               attempt,
               timestamp: new Date().toISOString(),
             });
-
-            if (!error) break;
-            if (error.message.includes('already registered')) {
-              throw new Error('Email already registered. Please log in or use a different email.');
-            }
+            break;
           } catch (networkError) {
             console.error('Network error during signup:', {
               message: networkError.message,
@@ -127,39 +124,16 @@ const LoginPage = () => {
               timestamp: new Date().toISOString(),
             });
             signupError = { message: 'Network error: Failed to reach server' };
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
           }
-          await delay(2000); // Wait 2s before retry
         }
 
-        if (signupError) {
-          console.error('SignUp Error:', signupError);
-          throw new Error(signupError.message || 'Failed to create account');
-        }
-        if (!signupData.user) {
-          throw new Error('Failed to create user account. Please try again.');
+        if (signupError || !signupData?.user) {
+          console.error('Signup Error:', signupError);
+          throw new Error(signupError?.message || 'Failed to create account');
         }
 
-        console.log('Signup auth successful, user:', signupData.user);
-
-        // Insert user profile
-        const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
-        const { error: profileError } = await supabase
-          .from('users')
-          .insert([
-            {
-              id: signupData.user.id,
-              email: formData.email,
-              name: formData.name,
-              points: 0,
-              money: 0,
-              is_admin: isAdmin,
-            },
-          ]);
-
-        if (profileError) {
-          console.error('Profile insert error:', profileError);
-          throw new Error(profileError.message || 'Failed to create user profile');
-        }
+        console.log('Signup successful, user:', signupData.user);
 
         // Verify profile
         const { data: profile, error: profileFetchError } = await supabase
@@ -173,14 +147,14 @@ const LoginPage = () => {
           throw new Error(profileFetchError?.message || 'User profile not found after signup');
         }
 
-        console.log('User profile created:', profile);
+        console.log('User profile retrieved:', profile);
 
         // Store user data
-        localStorage.setItem('token', signupData.session?.access_token);
+        localStorage.setItem('token', signupData.session.access_token);
         localStorage.setItem('user', JSON.stringify(profile));
 
         // Redirect based on admin status
-        if (isAdmin) {
+        if (profile.is_admin) {
           console.log('Admin account created, redirecting to admin dashboard');
           navigate('/admin/admindashboard');
         } else {
