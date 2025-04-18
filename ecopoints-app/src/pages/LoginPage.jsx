@@ -42,13 +42,11 @@ const LoginPage = () => {
 
         console.log('Login successful, user profile:', profile);
 
-        // Store user data in localStorage
         localStorage.setItem('token', data.session.access_token);
         localStorage.setItem('user', JSON.stringify(profile));
         localStorage.setItem('user_id', profile.id);
         localStorage.setItem('is_admin', profile.is_admin.toString());
 
-        // Redirect based on admin status
         if (profile.is_admin) {
           console.log('Admin user detected, redirecting to admin dashboard');
           navigate('/admin', { replace: true });
@@ -76,32 +74,56 @@ const LoginPage = () => {
 
         const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
 
-        const { data: profile, error: profileError } = await supabase
+        // Check for existing user profile to avoid duplicates
+        const { data: existingProfile, error: checkError } = await supabase
           .from('users')
-          .insert([
-            {
-              id: data.user.id,
-              email: formData.email,
-              name: formData.name,
-              points: 0,
-              bottles: 0,
-              cans: 0,
-              is_admin: isAdmin,
-            },
-          ])
-          .select()
-          .single();
+          .select('id')
+          .eq('id', data.user.id)
+          .maybeSingle();
 
-        if (profileError) {
-          console.error('Profile Insert Error:', profileError);
-          throw new Error(profileError.message || 'Failed to create user profile');
+        if (checkError) {
+          console.error('Check Profile Error:', checkError);
+          throw new Error(checkError.message || 'Failed to check user profile');
+        }
+
+        if (existingProfile) {
+          console.log('User profile already exists, skipping insert');
+        } else {
+          const { data: profile, error: profileError } = await supabase
+            .from('users')
+            .insert([
+              {
+                id: data.user.id,
+                email: formData.email,
+                name: formData.name,
+                points: 0,
+                bottles: 0,
+                cans: 0,
+                is_admin: isAdmin,
+              },
+            ])
+            .select()
+            .single();
+
+          if (profileError) {
+            console.error('Profile Insert Error:', profileError);
+            throw new Error(profileError.message || 'Database error saving new user');
+          }
         }
 
         if (data.session) {
           localStorage.setItem('token', data.session.access_token);
-          localStorage.setItem('user', JSON.stringify(profile));
-          localStorage.setItem('user_id', profile.id);
-          localStorage.setItem('is_admin', profile.is_admin.toString());
+          localStorage.setItem('user', JSON.stringify({
+            id: data.user.id,
+            email: formData.email,
+            name: formData.name,
+            points: 0,
+            bottles: 0,
+            cans: 0,
+            is_admin: isAdmin,
+          }));
+          localStorage.setItem('user_id', data.user.id);
+          localStorage.setItem('is_admin', isAdmin.toString());
         } else {
           setError('Account created successfully. Please log in to continue.');
           setIsLogin(true);
