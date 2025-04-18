@@ -179,6 +179,21 @@ const LoginPage = () => {
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setUser(null);
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user_id');
+      localStorage.removeItem('is_admin');
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Logout error:', error);
+      setError('Failed to log out');
+    }
+  };
 
   const handleChange = (e) => {
     setFormData({
@@ -189,20 +204,7 @@ const LoginPage = () => {
 
   return (
     <>
-      <header className="app-header">
-        <h1>EcoPoints</h1>
-      </header>
-      <div className="login-container">
-        <div className="login-card">
-          {user ? (
-            <div className="logged-in">
-              <h1>Welcome, {user.name}!</h1>
-              <p>You are logged in.</p>
-              <button onClick={handleLogout} className="logout-button">
-                <FontAwesomeIcon icon={faSignOutAlt} /> Log Out
-              </button>
-            </div>
-          ) : (
+
             <>
               <div className="login-header">
                 <h1>{isLogin ? 'Welcome Back!' : 'Join EcoPoints'}</h1>
