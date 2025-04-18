@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
+import { faPlay, faStop, faList } from '@fortawesome/free-solid-svg-icons';
 import { supabase } from '../config/supabase';
 import '../styles/Insert.css';
 import Layout from '../components/Layout';
@@ -11,36 +11,68 @@ const Insert = () => {
   const [isSensing, setIsSensing] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [userId, setUserId] = useState(null);
+  const [detections, setDetections] = useState([]);
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
     const checkSession = async () => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session || !session.user) {
-          console.error('Session error:', { sessionError, session });
-          throw new Error('Please log in.');
+        if (sessionError || !session) {
+          console.error('No session found:', sessionError);
+          setError('Please log in to start sensing.');
+          navigate('/login');
+          return;
         }
-
-        console.log('Session:', {
-          user_id: session.user.id,
-          email: session.user.email,
-          auth_uid: await supabase.auth.getUser().then(({ data }) => data.user?.id),
-        });
 
         const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
         if (!storedUser.id || storedUser.id !== session.user.id) {
-          console.error('User mismatch:', {
-            stored_id: storedUser.id,
-            session_id: session.user.id,
-          });
-          throw new Error('Invalid session.');
+          console.error('Stored user ID mismatch:', storedUser.id, session.user.id);
+          setError('Invalid user session.');
+          navigate('/login');
+          return;
         }
 
-        setUserId(session.user.id);
+        setUser({ id: session.user.id, name: storedUser.name });
+        console.log('Authenticated user:', { id: session.user.id, name: storedUser.name });
+
+        // Fetch existing detections for this user
+        const { data: detectionData, error: detectionError } = await supabase
+          .from('recyclables')
+          .select('material, quantity, confidence, created_at')
+          .eq('device_id', 'esp32-cam-1')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (detectionError) throw detectionError;
+
+        setDetections(detectionData || []);
+
+        // Subscribe to new detections
+        const subscription = supabase
+          .channel('recyclables_changes')
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'recyclables',
+              filter: `device_id=eq.esp32-cam-1&user_id=eq.${session.user.id}`,
+            },
+            (payload) => {
+              console.log('New detection:', payload);
+              setDetections((prev) => [payload.new, ...prev.slice(0, 9)]);
+            }
+          )
+          .subscribe();
+
+        return () => {
+          supabase.removeChannel(subscription);
+        };
       } catch (error) {
-        console.error('Session check:', error);
-        setError(error.message);
+        console.error('Session check error:', error);
+        setError('Failed to initialize: ' + error.message);
         navigate('/login');
       }
     };
@@ -49,8 +81,9 @@ const Insert = () => {
   }, [navigate]);
 
   const startSensing = async () => {
-    if (!userId) {
-      setError('No user logged in.');
+    if (!user) {
+      setError('Please log in to start sensing.');
+      navigate('/login');
       return;
     }
 
@@ -58,40 +91,39 @@ const Insert = () => {
     setError('');
 
     try {
-      // Refresh session
-      await supabase.auth.refreshSession();
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session || !session.user) {
-        throw new Error('Authentication failed');
+      if (sessionError || !session) {
+        throw new Error('Authentication required');
       }
 
-      console.log('Insert attempt:', {
-        user_id: userId,
-        auth_uid: session.user.id,
-        payload: { device_id: 'esp32-cam-1', command: 'start', user_id: userId },
-      });
+      if (session.user.id !== user.id) {
+        throw new Error('Session user ID mismatch');
+      }
+
+      console.log('Inserting command for user:', user.id);
 
       const { data, error: insertError } = await supabase
         .from('device_controls')
-        .insert({ device_id: 'esp32-cam-1', command: 'start', user_id: userId })
+        .insert({
+          device_id: 'esp32-cam-1',
+          command: 'start',
+          user_id: user.id,
+          created_at: new Date().toISOString(),
+        })
         .select()
         .single();
 
       if (insertError) {
-        console.error('Insert error:', {
-          message: insertError.message,
-          details: insertError.details,
-          hint: insertError.hint,
-          code: insertError.code,
-        });
+        console.error('Insert error:', insertError);
         throw new Error(`Start failed: ${insertError.message}`);
       }
 
-      console.log('Inserted:', data);
+      console.log('Command inserted:', data);
       setIsSensing(true);
+      setError('');
     } catch (error) {
-      console.error('Start error:', error);
-      setError(error.message || 'Failed to start sensing.');
+      console.error('Start sensing error:', error);
+      setError(error.message || 'Failed to start sensing');
     } finally {
       setLoading(false);
     }
@@ -102,19 +134,29 @@ const Insert = () => {
     setError('');
 
     try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session) {
+        throw new Error('Authentication required');
+      }
+
       const { data, error: insertError } = await supabase
         .from('device_controls')
-        .insert({ device_id: 'esp32-cam-1', command: 'stop', user_id: userId })
+        .insert({
+          device_id: 'esp32-cam-1',
+          command: 'stop',
+          user_id: user.id,
+          created_at: new Date().toISOString(),
+        })
         .select()
         .single();
 
-      if (insertError) throw new Error(`Stop failed: ${insertError.message}`);
+      if (insertError) throw insertError;
 
-      console.log('Stopped:', data);
       setIsSensing(false);
+      setError('');
     } catch (error) {
-      console.error('Stop error:', error);
-      setError(error.message);
+      console.error('Stop sensing error:', error);
+      setError(error.message || 'Failed to stop sensing');
     } finally {
       setLoading(false);
     }
@@ -129,19 +171,37 @@ const Insert = () => {
           <div className="button-group">
             <button
               onClick={startSensing}
-              disabled={isSensing || loading || !userId}
+              disabled={isSensing || loading || !user}
               className="control-button start-button"
             >
-              <FontAwesomeIcon icon={faPlay} /> {loading ? 'Starting...' : 'Start Sensing'}
+              <FontAwesomeIcon icon={faPlay} /> {loading && !isSensing ? 'Starting...' : 'Start Sensing'}
             </button>
             <button
               onClick={stopSensing}
               disabled={!isSensing || loading}
               className="control-button stop-button"
             >
-              <FontAwesomeIcon icon={faStop} /> {loading ? 'Stopping...' : 'Stop Sensing'}
+              <FontAwesomeIcon icon={faStop} /> {loading && isSensing ? 'Stopping...' : 'Stop Sensing'}
             </button>
           </div>
+        </div>
+
+        <div className="detections-section">
+          <h2>
+            <FontAwesomeIcon icon={faList} /> Recent Detections
+          </h2>
+          {detections.length > 0 ? (
+            <ul className="detections-list">
+              {detections.map((detection) => (
+                <li key={detection.created_at}>
+                  {detection.material} (Qty: {detection.quantity}, Confidence: {(detection.confidence * 100).toFixed(2)}%) -{' '}
+                  {new Date(detection.created_at).toLocaleString()}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No detections yet.</p>
+          )}
         </div>
       </div>
     </Layout>
