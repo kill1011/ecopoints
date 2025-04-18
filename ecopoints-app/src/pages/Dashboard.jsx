@@ -30,8 +30,8 @@ const Dashboard = () => {
   };
 
   const calculatePointsAndMoney = (material, quantity) => {
-    const pointsPerItem = 10; // 1 item = 10 points
-    const moneyPerItem = 0.10; // 1 item = 0.10 pesos (10 points = 0.10 pesos)
+    const pointsPerItem = 5; // 1 item = 10 points
+    const moneyPerItem = 0.05; // 1 item = 0.10 pesos (10 points = 0.10 pesos)
     const totalPoints = quantity * pointsPerItem;
     const totalMoney = quantity * moneyPerItem;
     return { points: totalPoints, money: totalMoney };
