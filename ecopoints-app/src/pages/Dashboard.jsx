@@ -29,13 +29,9 @@ const Dashboard = () => {
     return 'Good Evening';
   };
 
-  const calculateMoneyFromPoints = (points) => {
-    return points / 100; // 100 points = 1 peso
-  };
-
   const calculatePointsAndMoney = (material, quantity) => {
-    const pointsPerItem = 10;
-    const moneyPerItem = 0.05;
+    const pointsPerItem = 10; // 1 item = 10 points
+    const moneyPerItem = 0.10; // 1 item = 0.10 pesos (10 points = 0.10 pesos)
     const totalPoints = quantity * pointsPerItem;
     const totalMoney = quantity * moneyPerItem;
     return { points: totalPoints, money: totalMoney };
@@ -46,9 +42,6 @@ const Dashboard = () => {
       try {
         // Get current session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        console.log('Session:', session);
-        console.log('Session Error:', sessionError);
-
         if (sessionError || !session) {
           setError('Authentication required');
           console.log('No session, redirecting to login');
@@ -56,14 +49,14 @@ const Dashboard = () => {
           return;
         }
 
-        console.log('User ID:', session.user.id);
-        console.log('User Metadata:', session.user.user_metadata);
+        const userId = session.user.id;
+        console.log('User ID:', userId);
 
         // Fetch user data
         const { data: userData, error: userError } = await supabase
           .from('users')
           .select('points, money, name, bottles, cans')
-          .eq('id', session.user.id)
+          .eq('id', userId)
           .limit(1)
           .maybeSingle();
 
@@ -77,7 +70,7 @@ const Dashboard = () => {
           const { data: newUser, error: createError } = await supabase
             .from('users')
             .insert([{
-              id: session.user.id,
+              id: userId,
               name: session.user.user_metadata?.name || 'Guest',
               email: session.user.email || 'guest@example.com',
               points: 0,
@@ -101,37 +94,126 @@ const Dashboard = () => {
             cans: 0,
           });
         } else {
-          const calculatedMoney = calculateMoneyFromPoints(userData.points || 0);
           setStats({
             name: userData.name || 'Guest',
             points: Number(userData.points) || 0,
-            money: calculatedMoney,
+            money: Number(userData.money) || 0,
             bottles: Number(userData.bottles) || 0,
             cans: Number(userData.cans) || 0,
           });
         }
 
-        // Fetch recent detections using device_id
+        // Fetch and aggregate recyclables data
         const { data: detectionsData, error: detectionsError } = await supabase
           .from('recyclables')
           .select('material, quantity, created_at')
           .eq('device_id', 'esp32-cam-1')
-          .order('created_at', { ascending: false })
-          .limit(5);
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
 
         if (detectionsError) {
           console.error('Detections Query Error:', detectionsError);
           throw detectionsError;
         }
 
-        const enrichedDetections = detectionsData.map(detection => ({
-          ...detection,
-          ...calculatePointsAndMoney(detection.material, detection.quantity),
-        }));
+        // Aggregate bottles, cans, points, money
+        let totalBottles = 0;
+        let totalCans = 0;
+        let totalPoints = 0;
+        let totalMoney = 0;
 
-        setRecentDetections(enrichedDetections);
+        const enrichedDetections = detectionsData.map(detection => {
+          const { points, money } = calculatePointsAndMoney(detection.material, detection.quantity);
+          if (detection.material.toLowerCase().includes('bottle')) {
+            totalBottles += detection.quantity;
+          } else if (detection.material.toLowerCase().includes('can')) {
+            totalCans += detection.quantity;
+          }
+          totalPoints += points;
+          totalMoney += money;
+          return { ...detection, points, money };
+        });
+
+        // Update users table if stats differ
+        if (
+          totalBottles !== stats.bottles ||
+          totalCans !== stats.cans ||
+          totalPoints !== stats.points ||
+          totalMoney !== stats.money
+        ) {
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({
+              bottles: totalBottles,
+              cans: totalCans,
+              points: totalPoints,
+              money: totalMoney,
+            })
+            .eq('id', userId);
+
+          if (updateError) {
+            console.error('Update User Error:', updateError);
+            throw updateError;
+          }
+
+          setStats(prev => ({
+            ...prev,
+            bottles: totalBottles,
+            cans: totalCans,
+            points: totalPoints,
+            money: totalMoney,
+          }));
+        }
+
+        // Set recent detections (limit to 5)
+        setRecentDetections(enrichedDetections.slice(0, 5));
         setError(null);
 
+        // Subscribe to real-time recyclables changes
+        const subscription = supabase
+          .channel('recyclables_changes')
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'recyclables',
+              filter: `device_id=eq.esp32-cam-1&user_id=eq.${userId}`,
+            },
+            (payload) => {
+              console.log('New detection:', payload);
+              const { new: detection } = payload;
+              const { points, money } = calculatePointsAndMoney(detection.material, detection.quantity);
+              setRecentDetections(prev => {
+                const updated = [{ ...detection, points, money }, ...prev.slice(0, 4)];
+                console.log('Updated detections:', updated);
+                return updated;
+              });
+              setStats(prev => {
+                const newBottles = detection.material.toLowerCase().includes('bottle')
+                  ? prev.bottles + detection.quantity
+                  : prev.bottles;
+                const newCans = detection.material.toLowerCase().includes('can')
+                  ? prev.cans + detection.quantity
+                  : prev.cans;
+                return {
+                  ...prev,
+                  bottles: newBottles,
+                  cans: newCans,
+                  points: prev.points + points,
+                  money: prev.money + money,
+                };
+              });
+            }
+          )
+          .subscribe((status) => {
+            console.log('Subscription status:', status);
+          });
+
+        return () => {
+          console.log('Cleaning up subscription');
+          supabase.removeChannel(subscription);
+        };
       } catch (error) {
         console.error('Error fetching user data:', error);
         setError('Error loading user data. Please try again.');
