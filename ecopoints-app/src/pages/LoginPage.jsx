@@ -18,36 +18,6 @@ const LoginPage = () => {
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const fetchProfile = async (userId, retries = 3, retryDelay = 1000) => {
-    for (let i = 0; i < retries; i++) {
-      console.log(`Attempt ${i + 1} to fetch profile for user ID: ${userId}`);
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('id, email, name, is_admin')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (profileError) {
-        console.error('Profile Fetch Error:', {
-          message: profileError.message,
-          code: profileError.code,
-          details: profileError.details,
-          hint: profileError.hint,
-        });
-        throw new Error(profileError.message || 'Failed to fetch user profile');
-      }
-
-      if (profile) {
-        console.log('Profile fetched successfully:', profile);
-        return profile;
-      }
-
-      console.log('Profile not found, retrying after delay...');
-      await delay(retryDelay);
-    }
-    throw new Error('User profile not created after retries. Please contact support.');
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -63,69 +33,80 @@ const LoginPage = () => {
 
         if (error) throw new Error(error.message || 'Invalid email or password');
 
-        const profile = await fetchProfile(data.user.id);
-
-        console.log('Login successful, user profile:', profile);
-
+        console.log('Login successful, user:', data.user);
         localStorage.setItem('token', data.session.access_token);
-        localStorage.setItem('user', JSON.stringify(profile));
-        localStorage.setItem('user_id', profile.id);
-        localStorage.setItem('is_admin', profile.is_admin.toString());
-
-        if (profile.is_admin) {
-          navigate('/admin', { replace: true });
-        } else {
-          navigate('/dashboard', { replace: true });
-        }
+        localStorage.setItem('user_id', data.user.id);
+        navigate('/dashboard', { replace: true });
       } else {
         console.log('Testing table access...');
         const { data: test, error: testError } = await supabase.from('users').select('id').limit(1);
-        console.log('Test Query:', { test, testError });
-
-        console.log('Attempting signup with:', formData.email);
-        const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: { name: formData.name },
-            emailRedirectTo: window.location.origin + '/dashboard',
-          },
+        console.log('Test Query:', {
+          test,
+          testError: testError ? {
+            message: testError.message,
+            code: testError.code,
+            details: testError.details,
+          } : null,
         });
 
-        console.log('SignUp Response:', { user: data.user, session: data.session, error });
-        if (error) {
-          console.error('SignUp Error:', error);
-          throw new Error(error.message || 'Failed to create account');
+        console.log('Attempting signup with:', formData.email);
+        let signupError = null;
+        let signupData = null;
+
+        // Retry signup up to 3 times
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          console.log(`Signup attempt ${attempt}...`);
+          const { data, error } = await supabase.auth.signUp({
+            email: formData.email,
+            password: formData.password,
+            options: {
+              data: { name: formData.name },
+            },
+          });
+
+          signupData = data;
+          signupError = error;
+
+          console.log('SignUp Response:', {
+            user: data?.user,
+            session: data?.session,
+            error: error ? {
+              message: error.message,
+              code: error.code,
+              status: error.status,
+              details: error.details,
+            } : null,
+            attempt,
+          });
+
+          if (!error) break; // Success
+          if (error.message.includes('already registered')) {
+            throw new Error('Email already registered. Please log in or use a different email.');
+          }
+          await delay(1000); // Wait 1s before retry
         }
-        if (!data.user) {
+
+        if (signupError) {
+          console.error('SignUp Error:', signupError);
+          throw new Error(signupError.message || 'Failed to create account');
+        }
+        if (!signupData.user) {
           throw new Error('Failed to create user account. Please try again.');
         }
 
-        // Wait for trigger to complete
-        await delay(1000);
-
-        const profile = await fetchProfile(data.user.id);
-
-        if (data.session) {
-          localStorage.setItem('token', data.session.access_token);
-          localStorage.setItem('user', JSON.stringify(profile));
-          localStorage.setItem('user_id', profile.id);
-          localStorage.setItem('is_admin', profile.is_admin.toString());
-
-          if (profile.is_admin) {
-            navigate('/admin', { replace: true });
-          } else {
-            navigate('/dashboard', { replace: true });
-          }
-        } else {
-          setError('Account created successfully. Please log in.');
-          setIsLogin(true);
-          setFormData({ email: formData.email, password: '', name: '' });
-        }
+        console.log('User created:', signupData.user);
+        setError('Account created successfully. Please log in.');
+        setIsLogin(true);
+        setFormData({ email: formData.email, password: '', name: '' });
       }
     } catch (error) {
-      console.error('Authentication error:', error);
-      setError(error.message || 'Authentication failed');
+      console.error('Authentication error:', {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+        stack: error.stack,
+      });
+      setError(error.message || 'Authentication failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
