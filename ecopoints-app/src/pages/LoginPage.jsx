@@ -8,9 +8,9 @@ import '../styles/Login.css';
 const LoginPage = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
-    email: '',
+    gmail: '',
     password: '',
-    name: '',
+    username: '',
   });
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -23,16 +23,16 @@ const LoginPage = () => {
       if (isLogin) {
         // Handle login
         const { data, error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
+          email: formData.gmail,
           password: formData.password,
         });
 
         if (error) {
           if (error.message.includes('Invalid login')) {
-            throw new Error('Incorrect email or password');
+            throw new Error('Incorrect Gmail or password');
           }
           if (error.message.includes('Email not confirmed')) {
-            throw new Error('Please confirm your email before logging in');
+            throw new Error('Please confirm your Gmail before logging in');
           }
           throw error;
         }
@@ -40,18 +40,19 @@ const LoginPage = () => {
         // Check for user profile
         let { data: profile, error: profileError } = await supabase
           .from('users')
-          .select('id, email, name, total_points')
+          .select('id, username, gmail, total_points')
           .eq('id', data.user.id)
           .single();
 
         if (profileError || !profile) {
           // Create profile if missing
+          const defaultUsername = data.user.email.split('@')[0];
           const { error: insertError } = await supabase
             .from('users')
             .insert({
               id: data.user.id,
-              email: data.user.email,
-              name: data.user.email.split('@')[0], // Default name from email
+              username: defaultUsername,
+              gmail: data.user.email,
               total_points: 0,
             });
 
@@ -63,7 +64,7 @@ const LoginPage = () => {
           // Fetch created profile
           const { data: newProfile, error: newProfileError } = await supabase
             .from('users')
-            .select('id, email, name, total_points')
+            .select('id, username, gmail, total_points')
             .eq('id', data.user.id)
             .single();
 
@@ -77,36 +78,36 @@ const LoginPage = () => {
 
         localStorage.setItem('user', JSON.stringify({
           id: profile.id,
-          email: profile.email,
-          name: profile.name,
+          username: profile.username,
+          gmail: profile.gmail,
           total_points: profile.total_points,
         }));
 
         navigate('/dashboard', { replace: true });
       } else {
         // Handle signup
-        // Check if email exists in users
+        // Check if gmail or username exists
         const { data: existingUser, error: checkError } = await supabase
           .from('users')
           .select('id')
-          .eq('email', formData.email)
+          .or(`gmail.eq.${formData.gmail},username.eq.${formData.username}`)
           .single();
 
         if (existingUser) {
-          throw new Error('Email already registered. Please log in.');
+          throw new Error('Gmail or username already registered. Please log in.');
         }
         if (checkError && !checkError.message.includes('0 rows')) {
           throw checkError;
         }
 
         const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
+          email: formData.gmail,
           password: formData.password,
         });
 
         if (error) {
           if (error.message.includes('already registered')) {
-            throw new Error('Email already registered. Please log in.');
+            throw new Error('Gmail already registered. Please log in.');
           }
           throw error;
         }
@@ -116,8 +117,8 @@ const LoginPage = () => {
           .from('users')
           .insert({
             id: data.user.id,
-            email: data.user.email,
-            name: formData.name.trim() || data.user.email.split('@')[0], // Fallback to email prefix
+            username: formData.username.trim() || data.user.email.split('@')[0],
+            gmail: data.user.email,
             total_points: 0,
           });
 
@@ -131,20 +132,20 @@ const LoginPage = () => {
         if (data.session) {
           localStorage.setItem('user', JSON.stringify({
             id: data.user.id,
-            email: data.user.email,
-            name: formData.name.trim() || data.user.email.split('@')[0],
+            username: formData.username.trim() || data.user.email.split('@')[0],
+            gmail: data.user.email,
             total_points: 0,
           }));
           navigate('/dashboard', { replace: true });
         } else {
-          setError('Account created! Please check your email to confirm, then log in.');
-          setFormData({ email: '', password: '', name: '' });
+          setError('Account created! Please check your Gmail to confirm, then log in.');
+          setFormData({ gmail: '', password: '', username: '' });
         }
       }
     } catch (error) {
       console.error('Authentication error:', error);
       setError(error.message || 'Authentication failed');
-      setFormData({ email: '', password: '', name: '' });
+      setFormData({ gmail: '', password: '', username: '' });
     }
   };
 
@@ -174,10 +175,10 @@ const LoginPage = () => {
               <div className="input-group">
                 <input
                   type="text"
-                  name="name"
+                  name="username"
                   required
-                  placeholder="Full Name"
-                  value={formData.name}
+                  placeholder="Username"
+                  value={formData.username}
                   onChange={handleChange}
                   className="form-input"
                 />
@@ -188,10 +189,10 @@ const LoginPage = () => {
             <div className="input-group">
               <input
                 type="email"
-                name="email"
+                name="gmail"
                 required
-                placeholder="Email address"
-                value={formData.email}
+                placeholder="Gmail address"
+                value={formData.gmail}
                 onChange={handleChange}
                 className="form-input"
               />
@@ -221,7 +222,7 @@ const LoginPage = () => {
               onClick={() => {
                 setIsLogin(!isLogin);
                 setError('');
-                setFormData({ email: '', password: '', name: '' });
+                setFormData({ gmail: '', password: '', username: '' });
               }}
             >
               {isLogin ? 'New to EcoPoints? Create an account' : 'Already have an account? Sign in'}

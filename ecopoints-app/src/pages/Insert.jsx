@@ -11,51 +11,47 @@ const Insert = () => {
   const [isSensing, setIsSensing] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [userId, setUserId] = useState(null);
+  const [user, setUser] = useState(null);
   const [detections, setDetections] = useState([]);
+  const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
-    const checkSession = async () => {
+    const fetchUserAndDetections = async () => {
       try {
-        await supabase.auth.refreshSession();
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session || !session.user) {
-          console.error('Session error:', sessionError);
-          throw new Error('Please log in.');
+        // Get authenticated user
+        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+        if (authError || !authUser) {
+          throw new Error('Please log in to continue.');
         }
 
-        console.log('Session:', {
-          user_id: session.user.id,
-          email: session.user.email,
-          auth_uid: await supabase.auth.getUser().then(({ data }) => data.user?.id),
-        });
+        // Fetch user profile
+        const { data: profile, error: profileError } = await supabase
+          .from('users')
+          .select('id, username, gmail, total_points')
+          .eq('id', authUser.id)
+          .single();
 
-        const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-        if (!storedUser.id || storedUser.id !== session.user.id) {
-          console.error('User mismatch:', {
-            stored_id: storedUser.id,
-            session_id: session.user.id,
-          });
-          throw new Error('Invalid session.');
+        if (profileError || !profile) {
+          console.error('Profile error:', profileError);
+          throw new Error('User profile not found.');
         }
 
-        setUserId(session.user.id);
+        setUser(profile);
 
         // Fetch initial detections
         const { data: detectionData, error: detectionError } = await supabase
           .from('recyclables')
-          .select('material, quantity, confidence, created_at')
-          .eq('device_id', 'esp32-cam-1')
-          .eq('user_id', session.user.id)
+          .select('material, quantity, confidence, points, created_at')
+          .eq('user_id', profile.id)
           .order('created_at', { ascending: false })
           .limit(10);
 
         if (detectionError) {
           console.error('Fetch detections error:', detectionError);
-          setError('Failed to load detections.');
-        } else {
-          setDetections(detectionData || []);
+          throw new Error('Failed to load detections.');
         }
+
+        setDetections(detectionData || []);
 
         // Subscribe to new detections
         const subscription = supabase
@@ -66,30 +62,37 @@ const Insert = () => {
               event: 'INSERT',
               schema: 'public',
               table: 'recyclables',
-              filter: `device_id=eq.esp32-cam-1&user_id=eq.${session.user.id}`,
+              filter: `user_id=eq.${profile.id}`,
             },
             (payload) => {
               console.log('New detection:', payload);
               setDetections((prev) => [payload.new, ...prev.slice(0, 9)]);
             }
           )
-          .subscribe();
+          .subscribe((status, err) => {
+            if (err || status === 'CLOSED') {
+              console.error('Subscription error:', err || status);
+              setError('Failed to subscribe to detections.');
+            }
+          });
 
         return () => {
           supabase.removeChannel(subscription);
         };
       } catch (error) {
-        console.error('Session check:', error);
+        console.error('Initialization error:', error);
         setError(error.message);
         navigate('/login');
+      } finally {
+        setFetching(false);
       }
     };
 
-    checkSession();
+    fetchUserAndDetections();
   }, [navigate]);
 
   const startSensing = async () => {
-    if (!userId) {
+    if (!user) {
       setError('No user logged in.');
       return;
     }
@@ -98,35 +101,18 @@ const Insert = () => {
     setError('');
 
     try {
-      await supabase.auth.refreshSession();
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session || !session.user) {
-        throw new Error('Authentication failed');
-      }
-
-      console.log('Insert attempt:', {
-        user_id: userId,
-        auth_uid: session.user.id,
-        payload: { device_id: 'esp32-cam-1', command: 'start', user_id: userId },
-      });
-
       const { data, error: insertError } = await supabase
         .from('device_controls')
-        .insert({ device_id: 'esp32-cam-1', command: 'start', user_id: userId })
+        .insert({ device_id: 'esp32-cam-1', command: 'start', user_id: user.id })
         .select()
         .single();
 
       if (insertError) {
-        console.error('Insert error:', {
-          message: insertError.message,
-          details: insertError.details,
-          hint: insertError.hint,
-          code: insertError.code,
-        });
+        console.error('Insert error:', insertError);
         throw new Error(`Start failed: ${insertError.message}`);
       }
 
-      console.log('Inserted:', data);
+      console.log('Inserted start command:', data);
       setIsSensing(true);
     } catch (error) {
       console.error('Start error:', error);
@@ -137,13 +123,18 @@ const Insert = () => {
   };
 
   const stopSensing = async () => {
+    if (!user) {
+      setError('No user logged in.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
       const { data, error: insertError } = await supabase
         .from('device_controls')
-        .insert({ device_id: 'esp32-cam-1', command: 'stop', user_id: userId })
+        .insert({ device_id: 'esp32-cam-1', command: 'stop', user_id: user.id })
         .select()
         .single();
 
@@ -152,7 +143,7 @@ const Insert = () => {
         throw new Error(`Stop failed: ${insertError.message}`);
       }
 
-      console.log('Stopped:', data);
+      console.log('Inserted stop command:', data);
       setIsSensing(false);
     } catch (error) {
       console.error('Stop error:', error);
@@ -165,13 +156,22 @@ const Insert = () => {
   return (
     <Layout title="Insert Material">
       <div className="insert-container">
+        {user ? (
+          <div className="user-section">
+            <h2>Welcome, {user.username}</h2>
+            <p>Gmail: {user.gmail}</p>
+            <p>Total Points: {user.total_points}</p>
+          </div>
+        ) : (
+          <p>Please log in to continue.</p>
+        )}
         <div className="control-section">
           <h2>Control ESP32-CAM</h2>
           {error && <div className="error-message">{error}</div>}
           <div className="button-group">
             <button
               onClick={startSensing}
-              disabled={isSensing || loading || !userId}
+              disabled={isSensing || loading || !user}
               className="control-button start-button"
             >
               <FontAwesomeIcon icon={faPlay} /> {loading ? 'Starting...' : 'Start Sensing'}
@@ -189,17 +189,19 @@ const Insert = () => {
           <h2>
             <FontAwesomeIcon icon={faList} /> Recent Detections
           </h2>
-          {detections.length > 0 ? (
+          {fetching ? (
+            <p>Loading detections...</p>
+          ) : detections.length > 0 ? (
             <ul className="detections-list">
               {detections.map((detection) => (
                 <li key={detection.created_at}>
-                  {detection.material} (Qty: {detection.quantity}, Confidence: {(detection.confidence * 100).toFixed(2)}%) -{' '}
+                  {detection.material} (Qty: {detection.quantity}, Confidence: {(detection.confidence * 100).toFixed(2)}%, Points: {detection.points}) -{' '}
                   {new Date(detection.created_at).toLocaleString()}
                 </li>
               ))}
             </ul>
           ) : (
-            <p>No detections received. Check ESP32-CAM Serial Monitor for Supabase errors.</p>
+            <p>No detections received. Start sensing or check ESP32-CAM Serial Monitor.</p>
           )}
         </div>
       </div>

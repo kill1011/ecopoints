@@ -18,138 +18,106 @@ const History = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    let subscriptionRecyclables, subscriptionRedemptions;
+    let subscription;
 
     const fetchTransactionHistory = async () => {
       try {
         setLoading(true);
 
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session) {
+        // Authenticate user
+        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+        if (authError || !authUser) {
           throw new Error('Authentication required');
         }
 
-        const userId = session.user.id;
+        // Fetch history
+        const { data: historyData, error: historyError } = await supabase
+          .from('history')
+          .select('id, type, details, created_at')
+          .eq('user_id', authUser.id)
+          .order('created_at', { ascending: false })
+          .limit(50);
 
-        const [{ data: redemptionData, error: redemptionError }, { data: recyclableData, error: recyclableError }] = await Promise.all([
-          supabase
-            .from('redemption_requests')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(50),
-          supabase
-            .from('recyclable_transactions')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(50),
-        ]);
+        if (historyError) throw historyError;
 
-        if (redemptionError) throw redemptionError;
-        if (recyclableError) throw recyclableError;
+        // Map history to transactions
+        const mappedTransactions = (historyData || []).map((item) => {
+          if (item.type === 'recyclable') {
+            return {
+              id: item.id,
+              type: item.details.material || 'Recyclable',
+              date: item.created_at,
+              quantity: item.details.quantity || 1,
+              points: item.details.points || 0,
+              status: 'Completed',
+            };
+          } else if (item.type === 'redemption') {
+            return {
+              id: item.id,
+              type: 'Redemption',
+              date: item.created_at,
+              quantity: 1,
+              points: item.details.points || 0,
+              status: item.details.status || 'Pending',
+            };
+          }
+          return null;
+        }).filter((t) => t !== null);
 
-        const redemptions = (redemptionData || []).map((item) => ({
-          id: item.id,
-          type: 'Redemption',
-          date: item.created_at,
-          amount: item.amount,
-          points: item.points,
-          money: item.amount,
-          status: item.status,
-          processed_at: item.processed_at,
-          quantity: 1,
-        }));
+        setTransactions(mappedTransactions);
+        applyFilters(mappedTransactions, searchQuery, filterType);
 
-        const recyclables = (recyclableData || []).map((item) => ({
-          id: item.id,
-          type: item.type,
-          date: item.created_at,
-          quantity: item.quantity,
-          points: item.points,
-          money: item.money || (item.points / 100),
-          status: 'Completed',
-        }));
-
-        const allTransactions = [...redemptions, ...recyclables].sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        setTransactions(allTransactions);
-        applyFilters(allTransactions, searchQuery, filterType);
-
-        // Real-time subscriptions
-        subscriptionRecyclables = supabase
-          .channel('recyclable_transactions_changes')
+        // Subscribe to new history entries
+        subscription = supabase
+          .channel('history_changes')
           .on(
             'postgres_changes',
             {
               event: 'INSERT',
               schema: 'public',
-              table: 'recyclable_transactions',
-              filter: `user_id=eq.${userId}`,
+              table: 'history',
+              filter: `user_id=eq.${authUser.id}`,
             },
             (payload) => {
-              console.log('New recyclable transaction:', payload);
-              const newTransaction = {
-                id: payload.new.id,
-                type: payload.new.type,
-                date: payload.new.created_at,
-                quantity: payload.new.quantity,
-                points: payload.new.points,
-                money: payload.new.money || (payload.new.points / 100),
-                status: 'Completed',
-              };
-              setTransactions((prev) => {
-                const updated = [newTransaction, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date));
-                applyFilters(updated, searchQuery, filterType);
-                return updated;
-              });
-            }
-          )
-          .subscribe();
-
-        subscriptionRedemptions = supabase
-          .channel('redemption_requests_changes')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'redemption_requests',
-              filter: `user_id=eq.${userId}`,
-            },
-            (payload) => {
-              console.log('Redemption update:', payload);
-              setTransactions((prev) => {
-                let updated;
-                if (payload.eventType === 'INSERT') {
-                  const newTransaction = {
+              console.log('New history entry:', payload);
+              const newTransaction = (() => {
+                if (payload.new.type === 'recyclable') {
+                  return {
+                    id: payload.new.id,
+                    type: payload.new.details.material || 'Recyclable',
+                    date: payload.new.created_at,
+                    quantity: payload.new.details.quantity || 1,
+                    points: payload.new.details.points || 0,
+                    status: 'Completed',
+                  };
+                } else if (payload.new.type === 'redemption') {
+                  return {
                     id: payload.new.id,
                     type: 'Redemption',
                     date: payload.new.created_at,
-                    amount: payload.new.amount,
-                    points: payload.new.points,
-                    money: payload.new.amount,
-                    status: payload.new.status,
-                    processed_at: payload.new.processed_at,
                     quantity: 1,
+                    points: payload.new.details.points || 0,
+                    status: payload.new.details.status || 'Pending',
                   };
-                  updated = [newTransaction, ...prev];
-                } else if (payload.eventType === 'UPDATE') {
-                  updated = prev.map((t) =>
-                    t.id === payload.new.id && t.type === 'Redemption'
-                      ? { ...t, status: payload.new.status, processed_at: payload.new.processed_at }
-                      : t
-                  );
-                } else {
-                  return prev;
                 }
-                updated = updated.sort((a, b) => new Date(b.date) - new Date(a.date));
-                applyFilters(updated, searchQuery, filterType);
-                return updated;
-              });
+                return null;
+              })();
+
+              if (newTransaction) {
+                setTransactions((prev) => {
+                  const updated = [newTransaction, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date));
+                  applyFilters(updated, searchQuery, filterType);
+                  return updated;
+                });
+              }
             }
           )
-          .subscribe();
+          .subscribe((status, err) => {
+            if (err || status === 'CLOSED') {
+              console.error('Subscription error:', err || status);
+              setError('Failed to subscribe to history updates.');
+            }
+          });
 
         setError('');
       } catch (error) {
@@ -168,8 +136,7 @@ const History = () => {
     fetchTransactionHistory();
 
     return () => {
-      if (subscriptionRecyclables) supabase.removeChannel(subscriptionRecyclables);
-      if (subscriptionRedemptions) supabase.removeChannel(subscriptionRedemptions);
+      if (subscription) supabase.removeChannel(subscription);
     };
   }, [navigate]);
 
@@ -182,20 +149,22 @@ const History = () => {
         const typeMatch = transaction.type.toLowerCase().includes(lowerQuery);
         const statusMatch = transaction.status.toLowerCase().includes(lowerQuery);
         const dateMatch = formatDate(transaction.date).toLowerCase().includes(lowerQuery);
-        const pointsMatch = transaction.points?.toString().includes(lowerQuery);
-        const moneyMatch = transaction.money?.toString().includes(lowerQuery);
-        return typeMatch || statusMatch || dateMatch || pointsMatch || moneyMatch;
+        const pointsMatch = transaction.points.toString().includes(lowerQuery);
+        return typeMatch || statusMatch || dateMatch || pointsMatch;
       });
     }
 
     if (typeFilter !== 'all') {
-      filtered = filtered.filter((transaction) =>
-        transaction.type.toLowerCase() === typeFilter.toLowerCase()
-      );
+      filtered = filtered.filter((transaction) => {
+        if (typeFilter === 'recyclable') {
+          return transaction.type !== 'Redemption';
+        }
+        return transaction.type.toLowerCase() === typeFilter.toLowerCase();
+      });
     }
 
     setFilteredTransactions(filtered);
-    setCurrentPage(1); // Reset to first page on filter change
+    setCurrentPage(1);
   };
 
   const handleSearch = (e) => {
@@ -235,7 +204,6 @@ const History = () => {
     }
   };
 
-  // Pagination logic
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = filteredTransactions.slice(indexOfFirstItem, indexOfLastItem);
@@ -265,9 +233,8 @@ const History = () => {
               <div className="filter-bar">
                 <select value={filterType} onChange={handleFilterChange} className="filter-select">
                   <option value="all">All Types</option>
+                  <option value="recyclable">Recyclables</option>
                   <option value="redemption">Redemptions</option>
-                  <option value="plastic bottle">Plastic Bottles</option>
-                  <option value="can">Cans</option>
                 </select>
               </div>
             </div>
@@ -283,7 +250,7 @@ const History = () => {
           <div className="error-state">
             <div className="error-icon">⚠️</div>
             <p>{error}</p>
-            <button onClick={() => fetchTransactionHistory()} className="retry-btn">
+            <button onClick={() => window.location.reload()} className="retry-btn">
               Try Again
             </button>
           </div>
@@ -303,7 +270,6 @@ const History = () => {
                     <th>Type</th>
                     <th>Quantity</th>
                     <th>Points</th>
-                    <th>Money</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -321,8 +287,7 @@ const History = () => {
                         </span>
                       </td>
                       <td>{transaction.quantity}</td>
-                      <td className="points-cell">{transaction.points.toFixed(2)}</td>
-                      <td className="money-cell">₱{transaction.money.toFixed(2)}</td>
+                      <td className="points-cell">{transaction.points.toFixed(0)}</td>
                       <td>
                         <span className={`status ${getStatusClass(transaction.status)}`}>
                           {transaction.status}
