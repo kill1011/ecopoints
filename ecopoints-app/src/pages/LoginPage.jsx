@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faEnvelope, faLock, faUser } from '@fortawesome/free-solid-svg-icons';
+import { faEnvelope, faLock } from '@fortawesome/free-solid-svg-icons';
 import { supabase } from '../config/supabase';
 import '../styles/Login.css';
 
@@ -10,7 +10,6 @@ const LoginPage = () => {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
-    name: '',
   });
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -27,84 +26,92 @@ const LoginPage = () => {
           password: formData.password,
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('Invalid login')) {
+            throw new Error('Incorrect email or password');
+          }
+          throw error;
+        }
 
         const { data: profile, error: profileError } = await supabase
           .from('users')
-          .select('*')
-          .eq('email', formData.email)
+          .select('id, email, total_points')
+          .eq('id', data.user.id)
           .single();
 
-        if (profileError) throw profileError;
-        if (!profile) throw new Error('User profile not found');
+        if (profileError || !profile) {
+          throw new Error('User profile not found. Please sign up.');
+        }
 
         console.log('Login successful, user profile:', profile);
 
-        localStorage.setItem('token', data.session.access_token);
-        localStorage.setItem('user', JSON.stringify(profile));
-        localStorage.setItem('user_id', profile.id);
-        localStorage.setItem('is_admin', profile.is_admin);
+        localStorage.setItem('user', JSON.stringify({
+          id: profile.id,
+          email: profile.email,
+          total_points: profile.total_points
+        }));
 
-        if (profile.is_admin) {
-          console.log('Admin user detected, redirecting to admin dashboard');
-          navigate('/admin', { replace: true }); // Updated to match /admin route
-        } else {
-          console.log('Regular user detected, redirecting to user dashboard');
-          navigate('/dashboard', { replace: true });
-        }
+        navigate('/dashboard', { replace: true });
       } else {
         // Handle signup
-        const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: { name: formData.name },
-          },
-        });
-
-        if (error) throw error;
-
-        const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
-
-        const { error: profileError } = await supabase
+        // Check if email already exists
+        const { data: existingUser, error: checkError } = await supabase
           .from('users')
-          .insert([
-            {
-              id: data.user.id,
-              email: formData.email,
-              name: formData.name,
-              points: 0,
-              money: 0,
-              is_admin: isAdmin,
-            },
-          ]);
-
-        if (profileError) throw profileError;
-
-        const { data: checkData } = await supabase
-          .from('users')
-          .select()
+          .select('id')
           .eq('email', formData.email)
           .single();
 
-        if (checkData) {
-          if (data.session) {
-            localStorage.setItem('token', data.session.access_token);
-          }
-          localStorage.setItem('user', JSON.stringify(checkData));
+        if (existingUser) {
+          throw new Error('Email already registered. Please log in.');
+        }
+        if (checkError && !checkError.message.includes('0 rows')) {
+          throw checkError;
+        }
 
-          if (isAdmin) {
-            console.log('Admin account created, redirecting to admin dashboard');
-            navigate('/admin', { replace: true }); // Updated to match /admin route
-          } else {
-            console.log('User account created, redirecting to dashboard');
-            navigate('/dashboard', { replace: true });
+        const { data, error } = await supabase.auth.signUp({
+          email: formData.email,
+          password: formData.password,
+        });
+
+        if (error) {
+          if (error.message.includes('already registered')) {
+            throw new Error('Email already registered. Please log in.');
           }
+          throw error;
+        }
+
+        // Insert user profile
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert({
+            id: data.user.id,
+            email: formData.email,
+            total_points: 0,
+          });
+
+        if (profileError) {
+          console.error('Profile insert error:', profileError);
+          throw new Error('Failed to create user profile');
+        }
+
+        console.log('User account created, user:', data.user);
+
+        if (data.session) {
+          localStorage.setItem('user', JSON.stringify({
+            id: data.user.id,
+            email: data.user.email,
+            total_points: 0
+          }));
+          navigate('/dashboard', { replace: true });
+        } else {
+          setError('Account created! Please check your email to confirm, then log in.');
+          setFormData({ email: '', password: '' });
         }
       }
     } catch (error) {
       console.error('Authentication error:', error);
       setError(error.message || 'Authentication failed');
+      setFormData({ email: '', password: '' });
     }
   };
 
@@ -130,21 +137,6 @@ const LoginPage = () => {
           {error && <div className="error-message">{error}</div>}
 
           <form onSubmit={handleSubmit}>
-            {!isLogin && (
-              <div className="input-group">
-                <input
-                  type="text"
-                  name="name"
-                  required
-                  placeholder="Full Name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  className="form-input"
-                />
-                <FontAwesomeIcon icon={faUser} className="input-icon" />
-              </div>
-            )}
-
             <div className="input-group">
               <input
                 type="email"
@@ -181,7 +173,7 @@ const LoginPage = () => {
               onClick={() => {
                 setIsLogin(!isLogin);
                 setError('');
-                setFormData({ email: '', password: '', name: '' });
+                setFormData({ email: '', password: '' });
               }}
             >
               {isLogin ? 'New to EcoPoints? Create an account' : 'Already have an account? Sign in'}
