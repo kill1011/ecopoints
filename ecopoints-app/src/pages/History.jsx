@@ -1,22 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faHistory, 
-  faExchangeAlt, 
-  faRecycle,
-  faSearch 
-} from '@fortawesome/free-solid-svg-icons';
+import { faHistory, faExchangeAlt, faRecycle, faSearch } from '@fortawesome/free-solid-svg-icons';
 import { supabase } from '../config/supabase';
 import { useNavigate } from 'react-router-dom';
 import '../styles/History.css';
 
 const History = () => {
   const [transactions, setTransactions] = useState([]);
-  const [filteredTransactions, setFilteredTransactions] = useState([]); // For search/filter
+  const [filteredTransactions, setFilteredTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [searchQuery, setSearchQuery] = useState(''); // For search input
+  const [searchQuery, setSearchQuery] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -26,9 +21,8 @@ const History = () => {
   const fetchTransactionHistory = async () => {
     try {
       setLoading(true);
-      
+
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
       if (sessionError || !session) {
         throw new Error('Authentication required');
       }
@@ -36,53 +30,55 @@ const History = () => {
       const [{ data: redemptionData, error: redemptionError }, { data: recyclableData, error: recyclableError }] = await Promise.all([
         supabase
           .from('redemption_requests')
-          .select('*')
+          .select('id, user_id, amount, points, status, created_at, processed_at')
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
-
         supabase
           .from('recyclable_transactions')
-          .select('*')
+          .select('id, user_id, type, quantity, points, money, created_at')
           .eq('user_id', session.user.id)
-          .order('created_at', { ascending: false })
+          .order('created_at', { ascending: false }),
       ]);
 
-      if (redemptionError) throw redemptionError;
-      if (recyclableError) throw recyclableError;
+      if (redemptionError) throw new Error(redemptionError.message || 'Failed to fetch redemption requests');
+      if (recyclableError) throw new Error(recyclableError.message || 'Failed to fetch recyclable transactions');
 
       const redemptions = (redemptionData || []).map(item => ({
         id: item.id,
         type: 'redemption',
         date: item.created_at,
         amount: item.amount,
-        points: item.points || item.amount,
+        points: item.points,
         status: item.status,
-        processed_at: item.processed_at
+        processed_at: item.processed_at,
       }));
 
       const recyclables = (recyclableData || []).map(item => ({
         id: item.id,
-        type: item.type,
+        type: item.type, // 'bottle' or 'can'
         date: item.created_at,
         quantity: item.quantity,
         points: item.points,
         money: item.money,
-        status: 'completed'
+        status: 'completed',
       }));
 
-      const allTransactions = [...redemptions, ...recyclables]
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      const allTransactions = [...redemptions, ...recyclables].sort(
+        (a, b) => new Date(b.date) - new Date(a.date)
+      );
 
       setTransactions(allTransactions);
-      setFilteredTransactions(allTransactions); // Initialize filtered list
+      setFilteredTransactions(allTransactions);
       setError('');
-
     } catch (error) {
       console.error('Error fetching history:', error);
-      setError('Failed to load transaction history: ' + error.message);
+      setError(
+        error.message.includes('permission')
+          ? 'Access denied. Please contact support.'
+          : `Failed to load transaction history: ${error.message}`
+      );
       setTransactions([]);
       setFilteredTransactions([]);
-      
       if (error.message.includes('Authentication')) {
         navigate('/login');
       }
@@ -91,7 +87,6 @@ const History = () => {
     }
   };
 
-  // Search/filter transactions based on type, status, or date
   const handleSearch = (e) => {
     const query = e.target.value.toLowerCase();
     setSearchQuery(query);
@@ -100,7 +95,10 @@ const History = () => {
       const typeMatch = transaction.type.toLowerCase().includes(query);
       const statusMatch = transaction.status.toLowerCase().includes(query);
       const dateMatch = formatDate(transaction.date).toLowerCase().includes(query);
-      return typeMatch || statusMatch || dateMatch;
+      const pointsMatch = transaction.points?.toString().toLowerCase().includes(query);
+      const moneyMatch = transaction.money?.toFixed(2).toLowerCase().includes(query);
+      const amountMatch = transaction.amount?.toFixed(2).toLowerCase().includes(query);
+      return typeMatch || statusMatch || dateMatch || pointsMatch || moneyMatch || amountMatch;
     });
 
     setFilteredTransactions(filtered);
@@ -112,11 +110,16 @@ const History = () => {
 
   const getStatusClass = (status) => {
     switch (status?.toLowerCase()) {
-      case 'approved': return 'status-approved';
-      case 'rejected': return 'status-rejected';
-      case 'pending': return 'status-pending';
-      case 'completed': return 'status-completed';
-      default: return '';
+      case 'approved':
+        return 'status-approved';
+      case 'rejected':
+        return 'status-rejected';
+      case 'pending':
+        return 'status-pending';
+      case 'completed':
+        return 'status-completed';
+      default:
+        return '';
     }
   };
 
@@ -133,7 +136,7 @@ const History = () => {
               <FontAwesomeIcon icon={faSearch} className="search-icon" />
               <input
                 type="text"
-                placeholder="Search transactions..."
+                placeholder="Search by type, status, date, points, or amount..."
                 value={searchQuery}
                 onChange={handleSearch}
               />
@@ -180,23 +183,23 @@ const History = () => {
                       <td>{formatDate(transaction.date)}</td>
                       <td>
                         <span className="transaction-type">
-                          <FontAwesomeIcon 
-                            icon={transaction.type === 'redemption' ? faExchangeAlt : faRecycle} 
-                            className="type-icon" 
+                          <FontAwesomeIcon
+                            icon={transaction.type === 'redemption' ? faExchangeAlt : faRecycle}
+                            className="type-icon"
                           />
                           {transaction.type}
                         </span>
                       </td>
                       <td>{transaction.quantity || '-'}</td>
                       <td className="points-cell">
-                        {transaction.points?.toFixed(2) || '0.00'}
+                        {(transaction.points || 0).toFixed(2)}
                       </td>
                       <td className="money-cell">
-                        ₱{transaction.money?.toFixed(2) || '0.00'}
+                        ₱{(transaction.type === 'redemption' ? transaction.amount || 0 : transaction.money || 0).toFixed(2)}
                       </td>
                       <td>
                         <span className={`status ${getStatusClass(transaction.status)}`}>
-                          {transaction.status || 'pending'}
+                          {transaction.status}
                         </span>
                       </td>
                     </tr>

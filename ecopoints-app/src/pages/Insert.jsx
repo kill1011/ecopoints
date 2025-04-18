@@ -36,33 +36,36 @@ const Insert = () => {
         setUser({ id: session.user.id, name: storedUser.name });
         console.log('Authenticated user:', { id: session.user.id, name: storedUser.name });
 
-        // Fetch existing detections for this user
-        const { data: detectionData, error: detectionError } = await supabase
-          .from('recyclables')
-          .select('material, quantity, confidence, created_at')
+        // Fetch existing transactions for this user
+        const { data: transactionData, error: transactionError } = await supabase
+          .from('recyclable_transactions')
+          .select('id, type, quantity, points, money, created_at')
           .eq('device_id', 'esp32-cam-1')
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false })
           .limit(10);
 
-        if (detectionError) throw detectionError;
+        if (transactionError) throw new Error(transactionError.message || 'Failed to fetch transactions');
 
-        setDetections(detectionData || []);
+        setDetections(transactionData || []);
 
-        // Subscribe to new detections
+        // Subscribe to new recyclable transactions
         const subscription = supabase
-          .channel('recyclables_changes')
+          .channel('recyclable_transactions_changes')
           .on(
             'postgres_changes',
             {
               event: 'INSERT',
               schema: 'public',
-              table: 'recyclables',
+              table: 'recyclable_transactions',
               filter: `device_id=eq.esp32-cam-1&user_id=eq.${session.user.id}`,
             },
             (payload) => {
-              console.log('New detection:', payload);
+              console.log('New transaction:', payload);
               setDetections((prev) => [payload.new, ...prev.slice(0, 9)]);
+
+              // Update user stats in localStorage
+              updateUserStats(payload.new);
             }
           )
           .subscribe();
@@ -72,13 +75,56 @@ const Insert = () => {
         };
       } catch (error) {
         console.error('Session check error:', error);
-        setError('Failed to initialize: ' + error.message);
+        setError(
+          error.message.includes('permission')
+            ? 'Access denied. Please contact support.'
+            : error.message || 'Failed to initialize'
+        );
         navigate('/login');
       }
     };
 
     checkSession();
   }, [navigate]);
+
+  const updateUserStats = async (transaction) => {
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('points, bottles, cans')
+        .eq('id', user.id)
+        .single();
+
+      if (userError) throw userError;
+
+      const updates = {};
+      if (transaction.type === 'bottle') {
+        updates.bottles = (userData.bottles || 0) + transaction.quantity;
+      } else if (transaction.type === 'can') {
+        updates.cans = (userData.cans || 0) + transaction.quantity;
+      }
+      updates.points = (userData.points || 0) + transaction.points;
+
+      const { error: updateError } = await supabase
+        .from('users')
+        .update(updates)
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      // Update localStorage
+      const updatedUser = {
+        ...JSON.parse(localStorage.getItem('user') || '{}'),
+        points: updates.points,
+        bottles: updates.bottles || userData.bottles,
+        cans: updates.cans || userData.cans,
+      };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+    } catch (error) {
+      console.error('Error updating user stats:', error);
+      setError('Failed to update user stats: ' + error.message);
+    }
+  };
 
   const startSensing = async () => {
     if (!user) {
@@ -100,7 +146,7 @@ const Insert = () => {
         throw new Error('Session user ID mismatch');
       }
 
-      console.log('Inserting command for user:', user.id);
+      console.log('Inserting start command for user:', user.id);
 
       const { data, error: insertError } = await supabase
         .from('device_controls')
@@ -123,7 +169,11 @@ const Insert = () => {
       setError('');
     } catch (error) {
       console.error('Start sensing error:', error);
-      setError(error.message || 'Failed to start sensing');
+      setError(
+        error.message.includes('permission')
+          ? 'Access denied. Please contact support.'
+          : error.message || 'Failed to start sensing'
+      );
     } finally {
       setLoading(false);
     }
@@ -150,13 +200,18 @@ const Insert = () => {
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) throw new Error(insertError.message || 'Failed to insert stop command');
 
+      console.log('Stop command inserted:', data);
       setIsSensing(false);
       setError('');
     } catch (error) {
       console.error('Stop sensing error:', error);
-      setError(error.message || 'Failed to stop sensing');
+      setError(
+        error.message.includes('permission')
+          ? 'Access denied. Please contact support.'
+          : error.message || 'Failed to stop sensing'
+      );
     } finally {
       setLoading(false);
     }
@@ -188,19 +243,19 @@ const Insert = () => {
 
         <div className="detections-section">
           <h2>
-            <FontAwesomeIcon icon={faList} /> Recent Detections
+            <FontAwesomeIcon icon={faList} /> Recent Transactions
           </h2>
           {detections.length > 0 ? (
             <ul className="detections-list">
-              {detections.map((detection) => (
-                <li key={detection.created_at}>
-                  {detection.material} (Qty: {detection.quantity}, Confidence: {(detection.confidence * 100).toFixed(2)}%) -{' '}
-                  {new Date(detection.created_at).toLocaleString()}
+              {detections.map((transaction) => (
+                <li key={transaction.id}>
+                  {transaction.type} (Qty: {transaction.quantity}, Points: {transaction.points}, Money: ₱{transaction.money.toFixed(2)}) -{' '}
+                  {new Date(transaction.created_at).toLocaleString()}
                 </li>
               ))}
             </ul>
           ) : (
-            <p>No detections yet.</p>
+            <p>No transactions yet.</p>
           )}
         </div>
       </div>

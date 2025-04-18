@@ -33,22 +33,11 @@ const Dashboard = () => {
     return points / 100; // 100 points = 1 peso
   };
 
-  const calculatePointsAndMoney = (material, quantity) => {
-    const pointsPerItem = 10;
-    const moneyPerItem = 0.05;
-    const totalPoints = quantity * pointsPerItem;
-    const totalMoney = quantity * moneyPerItem;
-    return { points: totalPoints, money: totalMoney };
-  };
-
   useEffect(() => {
     const fetchUserStats = async () => {
       try {
         // Get current session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        console.log('Session:', session);
-        console.log('Session Error:', sessionError);
-
         if (sessionError || !session) {
           setError('Authentication required');
           console.log('No session, redirecting to login');
@@ -62,14 +51,14 @@ const Dashboard = () => {
         // Fetch user data
         const { data: userData, error: userError } = await supabase
           .from('users')
-          .select('points, money, name, bottles, cans')
+          .select('id, name, email, points, bottles, cans')
           .eq('id', session.user.id)
           .limit(1)
           .maybeSingle();
 
         if (userError) {
           console.error('User Query Error:', userError);
-          throw new Error(userError.message);
+          throw new Error(userError.message || 'Failed to fetch user data');
         }
 
         if (!userData) {
@@ -81,7 +70,6 @@ const Dashboard = () => {
               name: session.user.user_metadata?.name || 'Guest',
               email: session.user.email || 'guest@example.com',
               points: 0,
-              money: 0,
               bottles: 0,
               cans: 0,
             }])
@@ -90,7 +78,7 @@ const Dashboard = () => {
 
           if (createError) {
             console.error('Create User Error:', createError);
-            throw createError;
+            throw new Error(createError.message || 'Failed to create user profile');
           }
 
           setStats({
@@ -111,30 +99,28 @@ const Dashboard = () => {
           });
         }
 
-        // Fetch recent detections using device_id
-        const { data: detectionsData, error: detectionsError } = await supabase
-          .from('recyclables')
-          .select('material, quantity, created_at')
-          .eq('device_id', 'esp32-cam-1')
+        // Fetch recent transactions for the user
+        const { data: transactionsData, error: transactionsError } = await supabase
+          .from('recyclable_transactions')
+          .select('type, quantity, points, money, created_at')
+          .eq('user_id', session.user.id)
           .order('created_at', { ascending: false })
           .limit(5);
 
-        if (detectionsError) {
-          console.error('Detections Query Error:', detectionsError);
-          throw detectionsError;
+        if (transactionsError) {
+          console.error('Transactions Query Error:', transactionsError);
+          throw new Error(transactionsError.message || 'Failed to fetch recent transactions');
         }
 
-        const enrichedDetections = detectionsData.map(detection => ({
-          ...detection,
-          ...calculatePointsAndMoney(detection.material, detection.quantity),
-        }));
-
-        setRecentDetections(enrichedDetections);
+        setRecentDetections(transactionsData || []);
         setError(null);
-
       } catch (error) {
         console.error('Error fetching user data:', error);
-        setError('Error loading user data. Please try again.');
+        setError(
+          error.message.includes('permission')
+            ? 'Access denied. Please contact support.'
+            : 'Error loading user data. Please try again.'
+        );
       } finally {
         setLoading(false);
       }
@@ -195,19 +181,19 @@ const Dashboard = () => {
 
             <div className="detections-section">
               <h2>
-                <FontAwesomeIcon icon={faList} /> Recent Materials Received
+                <FontAwesomeIcon icon={faList} /> Recent Transactions
               </h2>
               {recentDetections.length > 0 ? (
                 <ul className="detections-list">
-                  {recentDetections.map((detection) => (
-                    <li key={detection.created_at}>
-                      {detection.material} ({detection.quantity}) - Points: {detection.points}, Value: ₱{detection.money.toFixed(2)} -{' '}
-                      {new Date(detection.created_at).toLocaleString()}
+                  {recentDetections.map((transaction) => (
+                    <li key={transaction.created_at}>
+                      {transaction.type} (Qty: {transaction.quantity}) - Points: {transaction.points}, Value: ₱{transaction.money.toFixed(2)} -{' '}
+                      {new Date(transaction.created_at).toLocaleString()}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p>No recent materials received.</p>
+                <p>No recent transactions.</p>
               )}
             </div>
           </main>

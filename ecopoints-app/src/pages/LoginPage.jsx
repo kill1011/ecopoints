@@ -27,27 +27,30 @@ const LoginPage = () => {
           password: formData.password,
         });
 
-        if (error) throw error;
+        if (error) throw new Error(error.message || 'Invalid email or password');
 
+        // Fetch user profile
         const { data: profile, error: profileError } = await supabase
           .from('users')
-          .select('*')
-          .eq('email', formData.email)
+          .select('id, email, name, points, bottles, cans, is_admin')
+          .eq('id', data.user.id)
           .single();
 
-        if (profileError) throw profileError;
+        if (profileError) throw new Error(profileError.message || 'Failed to fetch user profile');
         if (!profile) throw new Error('User profile not found');
 
         console.log('Login successful, user profile:', profile);
 
+        // Store user data in localStorage
         localStorage.setItem('token', data.session.access_token);
         localStorage.setItem('user', JSON.stringify(profile));
         localStorage.setItem('user_id', profile.id);
-        localStorage.setItem('is_admin', profile.is_admin);
+        localStorage.setItem('is_admin', profile.is_admin.toString());
 
+        // Redirect based on admin status
         if (profile.is_admin) {
           console.log('Admin user detected, redirecting to admin dashboard');
-          navigate('/admin', { replace: true }); // Updated to match /admin route
+          navigate('/admin', { replace: true });
         } else {
           console.log('Regular user detected, redirecting to user dashboard');
           navigate('/dashboard', { replace: true });
@@ -62,11 +65,13 @@ const LoginPage = () => {
           },
         });
 
-        if (error) throw error;
+        if (error) throw new Error(error.message || 'Failed to create account');
 
+        // Determine admin status based on email
         const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
 
-        const { error: profileError } = await supabase
+        // Insert user profile
+        const { data: profile, error: profileError } = await supabase
           .from('users')
           .insert([
             {
@@ -74,39 +79,42 @@ const LoginPage = () => {
               email: formData.email,
               name: formData.name,
               points: 0,
-              money: 0,
+              bottles: 0,
+              cans: 0,
               is_admin: isAdmin,
             },
-          ]);
-
-        if (profileError) throw profileError;
-
-        const { data: checkData } = await supabase
-          .from('users')
+          ])
           .select()
-          .eq('email', formData.email)
           .single();
 
-        if (checkData) {
-          if (data.session) {
-            localStorage.setItem('token', data.session.access_token);
-          }
-          localStorage.setItem('user', JSON.stringify(checkData));
+        if (profileError) throw new Error(profileError.message || 'Failed to create user profile');
 
-          if (isAdmin) {
-            console.log('Admin account created, redirecting to admin dashboard');
-            navigate('/admin', { replace: true }); // Updated to match /admin route
-          } else {
-            console.log('User account created, redirecting to dashboard');
-            navigate('/dashboard', { replace: true });
-          }
+        // Store user data in localStorage if session exists
+        if (data.session) {
+          localStorage.setItem('token', data.session.access_token);
+          localStorage.setItem('user', JSON.stringify(profile));
+          localStorage.setItem('user_id', profile.id);
+          localStorage.setItem('is_admin', profile.is_admin.toString());
+        }
+
+        // Redirect based on admin status
+        if (isAdmin) {
+          console.log('Admin account created, redirecting to admin dashboard');
+          navigate('/admin', { replace: true });
+        } else {
+          console.log('User account created, redirecting to dashboard');
+          navigate('/dashboard', { replace: true });
         }
       }
     } catch (error) {
       console.error('Authentication error:', error);
-      setError(error.message || 'Authentication failed');
+      setError(
+        error.message.includes('permission')
+          ? 'Access denied. Please contact support.'
+          : error.message || 'Authentication failed'
+      );
     }
-  };
+    };
 
   const handleChange = (e) => {
     setFormData({

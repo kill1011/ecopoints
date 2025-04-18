@@ -19,27 +19,24 @@ const Redemption = () => {
     const checkAuthAndFetchData = async () => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError) {
-          console.error('Session error:', sessionError);
-          throw sessionError;
-        }
-
-        if (!session) {
+        if (sessionError || !session) {
+          console.error('Session error:', sessionError || 'No active session');
           navigate('/login');
           return;
         }
 
-        localStorage.setItem('user_id', session.user.id);
-        localStorage.setItem('user_name', session.user.user_metadata?.name || session.user.email);
-
         await Promise.all([
-          fetchUserData(),
-          fetchPendingRedemptions()
+          fetchUserData(session.user.id),
+          fetchPendingRedemptions(session.user.id),
         ]);
-
       } catch (error) {
         console.error('Auth check failed:', error);
+        setMessage(
+          error.message.includes('permission')
+            ? 'Access denied. Please contact support.'
+            : 'Failed to initialize. Please log in.'
+        );
+        setMessageType('error');
         navigate('/login');
       }
     };
@@ -47,29 +44,20 @@ const Redemption = () => {
     checkAuthAndFetchData();
   }, [navigate]);
 
-  const fetchUserData = async () => {
+  const fetchUserData = async (userId) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error('No active session');
-      }
-
       const { data: userData, error } = await supabase
         .from('users')
         .select('points')
-        .eq('id', session.user.id)
+        .eq('id', userId)
         .single();
 
-      if (error) throw error;
-
-      if (!userData) {
-        throw new Error('User data not found');
-      }
+      if (error) throw new Error(error.message || 'Failed to fetch user data');
+      if (!userData) throw new Error('User data not found');
 
       setUserPoints(userData.points || 0);
       setMessage('');
       setMessageType('');
-
     } catch (error) {
       console.error('Error fetching user data:', error);
       setUserPoints(0);
@@ -78,25 +66,22 @@ const Redemption = () => {
     }
   };
 
-  const fetchPendingRedemptions = async () => {
+  const fetchPendingRedemptions = async (userId) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error('No active session');
-      }
-
       const { data: redemptions, error } = await supabase
         .from('redemption_requests')
-        .select('*')
-        .eq('user_id', session.user.id)
+        .select('id, amount, points, status, created_at')
+        .eq('user_id', userId)
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) throw new Error(error.message || 'Failed to fetch pending redemptions');
 
       setPendingRedemptions(redemptions || []);
     } catch (error) {
       console.error('Error fetching pending redemptions:', error);
+      setMessage('Error loading pending redemptions: ' + error.message);
+      setMessageType('error');
     }
   };
 
@@ -108,88 +93,87 @@ const Redemption = () => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
-    
+    setMessageType('');
+
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session) {
         throw new Error('Authentication required');
       }
 
       const amount = parseFloat(redeemAmount);
-
       if (isNaN(amount) || amount <= 0) {
-        setMessage('Please enter a valid amount');
-        setMessageType('error');
-        return;
+        throw new Error('Please enter a valid amount');
       }
 
       const pointsNeeded = calculatePointsNeeded(amount);
 
       const { data: currentUser, error: userError } = await supabase
         .from('users')
-        .select('points')
+        .select('points, name')
         .eq('id', session.user.id)
         .single();
 
-      if (userError) throw userError;
+      if (userError) throw new Error(userError.message || 'Failed to fetch user data');
 
       if (pointsNeeded > currentUser.points) {
-        setMessage(`Insufficient points. You need ${pointsNeeded} points to redeem ₱${amount}`);
-        setMessageType('error');
-        return;
+        throw new Error(`Insufficient points. You need ${pointsNeeded} points to redeem ₱${amount}`);
       }
 
       const newPoints = currentUser.points - pointsNeeded;
 
       const { error: updateError } = await supabase
         .from('users')
-        .update({ 
-          points: newPoints
-        })
+        .update({ points: newPoints })
         .eq('id', session.user.id);
 
-      if (updateError) throw updateError;
+      if (updateError) throw new Error(updateError.message || 'Failed to update user points');
 
       const { data: redemption, error: redemptionError } = await supabase
         .from('redemption_requests')
         .insert({
           user_id: session.user.id,
           amount: amount,
-          points: pointsNeeded, // Now matches the schema with points column added
+          points: pointsNeeded,
           status: 'pending',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
         })
         .select()
         .single();
 
-      if (redemptionError) throw redemptionError;
+      if (redemptionError) throw new Error(redemptionError.message || 'Failed to create redemption request');
 
-      await supabase
+      const { error: notificationError } = await supabase
         .from('admin_notifications')
         .insert({
           type: 'redemption_request',
           user_id: session.user.id,
-          user_name: session.user.user_metadata?.name || session.user.email,
+          user_name: currentUser.name || session.user.email,
           message: `New redemption request: ₱${amount.toFixed(2)} (${pointsNeeded} points)`,
           request_id: redemption.id,
           status: 'unread',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
         });
+
+      if (notificationError) throw new Error(notificationError.message || 'Failed to create admin notification');
 
       setMessage('Redemption request sent! Waiting for admin approval.');
       setMessageType('success');
       setRedeemAmount('');
-      
-      await Promise.all([
-        fetchUserData(),
-        fetchPendingRedemptions()
-      ]);
 
+      await Promise.all([
+        fetchUserData(session.user.id),
+        fetchPendingRedemptions(session.user.id),
+      ]);
     } catch (error) {
-      console.error('Redemption Error:', error); // Line 199
-      setMessage(error.message || 'Failed to submit redemption request');
+      console.error('Redemption Error:', error);
+      setMessage(
+        error.message.includes('permission')
+          ? 'Access denied. Please contact support.'
+          : error.message || 'Failed to submit redemption request'
+      );
       setMessageType('error');
-      await fetchUserData();
+      await fetchUserData(session.user.id);
     } finally {
       setLoading(false);
     }
@@ -223,8 +207,8 @@ const Redemption = () => {
                 placeholder="Enter amount to redeem"
               />
             </div>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="redeem-button"
               disabled={loading || !redeemAmount || parseFloat(redeemAmount) <= 0}
             >
@@ -245,6 +229,7 @@ const Redemption = () => {
               {pendingRedemptions.map((redemption) => (
                 <div key={redemption.id} className="pending-item">
                   <span>Amount: ₱{redemption.amount.toFixed(2)}</span>
+                  <span>Points: {redemption.points}</span>
                   <span>Status: <span className="status pending">Pending</span></span>
                   <span>Requested: {new Date(redemption.created_at).toLocaleDateString()}</span>
                 </div>
