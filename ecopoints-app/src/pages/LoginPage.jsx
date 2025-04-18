@@ -81,7 +81,7 @@ const LoginPage = () => {
           console.log(`Signup attempt ${attempt}...`);
           try {
             const startTime = Date.now();
-            const response = await fetch('https://new-project-id.supabase.co/functions/v1/signup-user', {
+            const response = await fetch('https://kvpnjoheifhfwekwkoa.supabase.co/functions/v1/signup-user', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -91,14 +91,27 @@ const LoginPage = () => {
               }),
             });
 
-            const result = await response.json();
             console.log('Signup request duration:', Date.now() - startTime, 'ms');
+
+            const result = await response.json();
+            console.log('Fetch Response:', {
+              status: response.status,
+              statusText: response.statusText,
+              headers: Object.fromEntries(response.headers.entries()),
+              body: result,
+              attempt,
+              timestamp: new Date().toISOString(),
+            });
 
             if (!response.ok) {
               console.error('Signup response error:', result);
-              signupError = { message: result.error || 'Failed to create account' };
+              signupError = { message: result.error || `HTTP ${response.status}: ${response.statusText}` };
               if (result.error?.includes('already registered')) {
                 throw new Error('Email already registered. Please log in or use a different email.');
+              }
+              if (response.status >= 400 && response.status < 500) {
+                // Don't retry on client errors (e.g., 400, 401, 404)
+                throw new Error(signupError.message);
               }
               await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
               continue;
@@ -116,21 +129,28 @@ const LoginPage = () => {
               timestamp: new Date().toISOString(),
             });
             break;
-          } catch (networkError) {
-            console.error('Network error during signup:', {
-              message: networkError.message,
-              stack: networkError.stack,
+          } catch (fetchError) {
+            console.error('Fetch error during signup:', {
+              message: fetchError.message,
+              name: fetchError.name,
+              cause: fetchError.cause,
+              stack: fetchError.stack,
               attempt,
               timestamp: new Date().toISOString(),
             });
-            signupError = { message: 'Network error: Failed to reach server' };
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
+            signupError = { message: fetchError.message || 'Failed to reach signup service' };
+            if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
+              // Network or CORS issue, retry
+              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
+              continue;
+            }
+            throw new Error(signupError.message);
           }
         }
 
         if (signupError || !signupData?.user) {
           console.error('Signup Error:', signupError);
-          throw new Error(signupError?.message || 'Failed to create account');
+          throw new Error(signupError.message || 'Failed to create account');
         }
 
         console.log('Signup successful, user:', signupData.user);
