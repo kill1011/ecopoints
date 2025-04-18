@@ -22,6 +22,7 @@ const LoginPage = () => {
     try {
       if (isLogin) {
         // Handle login
+        console.log('Attempting login with:', formData.email);
         const { data, error } = await supabase.auth.signInWithPassword({
           email: formData.email,
           password: formData.password,
@@ -67,8 +68,8 @@ const LoginPage = () => {
         });
         console.log('SignUp Response:', data, 'Error:', error);
         if (error) {
-          if (error.message.includes('Gmail')) {
-            throw new Error('Failed to verify Gmail address. Please try a different email or contact support.');
+          if (error.message.includes('permission')) {
+            throw new Error('Access denied. Please contact support.');
           }
           throw new Error(error.message || 'Failed to create account');
         }
@@ -118,11 +119,7 @@ const LoginPage = () => {
       }
     } catch (error) {
       console.error('Authentication error:', error);
-      setError(
-        error.message.includes('permission')
-          ? 'Access denied. Please contact support.'
-          : error.message || 'Authentication failed'
-      );
+      setError(error.message || 'Authentication failed');
     }
   };
 
