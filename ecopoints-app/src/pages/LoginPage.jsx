@@ -33,10 +33,34 @@ const LoginPage = () => {
 
         if (error) throw new Error(error.message || 'Invalid email or password');
 
-        console.log('Login successful, user:', data.user);
+        console.log('Login auth successful, user:', data.user);
+
+        // Fetch user profile
+        const { data: profile, error: profileError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', formData.email)
+          .single();
+
+        if (profileError) throw new Error(profileError.message || 'Error fetching profile');
+        if (!profile) throw new Error('User profile not found');
+
+        console.log('Login successful, user profile:', profile);
+
+        // Store user data
         localStorage.setItem('token', data.session.access_token);
-        localStorage.setItem('user_id', data.user.id);
-        navigate('/dashboard', { replace: true });
+        localStorage.setItem('user', JSON.stringify(profile));
+        localStorage.setItem('user_id', profile.id);
+        localStorage.setItem('is_admin', profile.is_admin);
+
+        // Redirect based on admin status
+        if (profile.is_admin) {
+          console.log('Admin user detected, redirecting to admin dashboard');
+          navigate('/admin/admindashboard', { replace: true });
+        } else {
+          console.log('Regular user detected, redirecting to user dashboard');
+          navigate('/dashboard', { replace: true });
+        }
       } else {
         console.log('Testing table access...');
         const { data: test, error: testError } = await supabase.from('users').select('id').limit(1);
@@ -50,40 +74,61 @@ const LoginPage = () => {
         });
 
         console.log('Attempting signup with:', formData.email);
-        let signupError = null;
         let signupData = null;
+        let signupError = null;
 
         // Retry signup up to 3 times
         for (let attempt = 1; attempt <= 3; attempt++) {
           console.log(`Signup attempt ${attempt}...`);
-          const { data, error } = await supabase.auth.signUp({
-            email: formData.email,
-            password: formData.password,
-            options: {
-              data: { name: formData.name },
-            },
-          });
+          try {
+            const startTime = Date.now();
+            const { data, error } = await supabase.auth.signUp({
+              email: formData.email,
+              password: formData.password,
+              options: {
+                data: { name: formData.name },
+              },
+            });
 
-          signupData = data;
-          signupError = error;
+            console.log('Signup request duration:', Date.now() - startTime, 'ms');
 
-          console.log('SignUp Response:', {
-            user: data?.user,
-            session: data?.session,
-            error: error ? {
-              message: error.message,
-              code: error.code,
-              status: error.status,
-              details: error.details,
-            } : null,
-            attempt,
-          });
+            signupData = data;
+            signupError = error;
 
-          if (!error) break; // Success
-          if (error.message.includes('already registered')) {
-            throw new Error('Email already registered. Please log in or use a different email.');
+            console.log('SignUp Response:', {
+              user: data?.user ? {
+                id: data.user.id,
+                email: data.user.email,
+                created_at: data.user.created_at,
+              } : null,
+              session: data?.session ? {
+                access_token: data.session.access_token?.slice(0, 10) + '...',
+                expires_at: data.session.expires_at,
+              } : null,
+              error: error ? {
+                message: error.message,
+                code: error.code,
+                status: error.status,
+                details: error.details,
+              } : null,
+              attempt,
+              timestamp: new Date().toISOString(),
+            });
+
+            if (!error) break;
+            if (error.message.includes('already registered')) {
+              throw new Error('Email already registered. Please log in or use a different email.');
+            }
+          } catch (networkError) {
+            console.error('Network error during signup:', {
+              message: networkError.message,
+              stack: networkError.stack,
+              attempt,
+              timestamp: new Date().toISOString(),
+            });
+            signupError = { message: 'Network error: Failed to reach server' };
           }
-          await delay(1000); // Wait 1s before retry
+          await delay(2000); // Wait 2s before retry
         }
 
         if (signupError) {
@@ -94,10 +139,54 @@ const LoginPage = () => {
           throw new Error('Failed to create user account. Please try again.');
         }
 
-        console.log('User created:', signupData.user);
-        setError('Account created successfully. Please log in.');
-        setIsLogin(true);
-        setFormData({ email: formData.email, password: '', name: '' });
+        console.log('Signup auth successful, user:', signupData.user);
+
+        // Insert user profile
+        const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert([
+            {
+              id: signupData.user.id,
+              email: formData.email,
+              name: formData.name,
+              points: 0,
+              money: 0,
+              is_admin: isAdmin,
+            },
+          ]);
+
+        if (profileError) {
+          console.error('Profile insert error:', profileError);
+          throw new Error(profileError.message || 'Failed to create user profile');
+        }
+
+        // Verify profile
+        const { data: profile, error: profileFetchError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', formData.email)
+          .single();
+
+        if (profileFetchError || !profile) {
+          console.error('Profile fetch error:', profileFetchError);
+          throw new Error(profileFetchError?.message || 'User profile not found after signup');
+        }
+
+        console.log('User profile created:', profile);
+
+        // Store user data
+        localStorage.setItem('token', signupData.session?.access_token);
+        localStorage.setItem('user', JSON.stringify(profile));
+
+        // Redirect based on admin status
+        if (isAdmin) {
+          console.log('Admin account created, redirecting to admin dashboard');
+          navigate('/admin/admindashboard');
+        } else {
+          console.log('User account created, redirecting to dashboard');
+          navigate('/dashboard');
+        }
       }
     } catch (error) {
       console.error('Authentication error:', {
@@ -105,6 +194,7 @@ const LoginPage = () => {
         code: error.code,
         status: error.status,
         stack: error.stack,
+        timestamp: new Date().toISOString(),
       });
       setError(error.message || 'Authentication failed. Please try again.');
     } finally {
