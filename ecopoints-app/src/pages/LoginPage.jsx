@@ -73,9 +73,24 @@ const LoginPage = () => {
         }
 
         const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
-
-        // Temporarily skip insert to test if auth succeeds
-        console.log('Skipping users table insert to isolate error. User ID:', data.user.id);
+        
+        // Insert the new user into the users table
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: data.user.id,
+            email: formData.email,
+            name: formData.name,
+            points: 0,
+            bottles: 0,
+            cans: 0,
+            is_admin: isAdmin
+          });
+          
+        if (insertError) {
+          console.error('Database error saving new user:', insertError);
+          throw new Error('Database error saving new user. Please try again.');
+        }
 
         if (data.session) {
           localStorage.setItem('token', data.session.access_token);
@@ -90,19 +105,20 @@ const LoginPage = () => {
           }));
           localStorage.setItem('user_id', data.user.id);
           localStorage.setItem('is_admin', isAdmin.toString());
+          
+          if (isAdmin) {
+            console.log('Admin account created, redirecting to admin dashboard');
+            navigate('/admin', { replace: true });
+          } else {
+            console.log('User account created, redirecting to dashboard');
+            navigate('/dashboard', { replace: true });
+          }
         } else {
-          setError('Account created successfully. Please log in to continue.');
+          // If using email confirmation flow, show appropriate message
+          setError('Account created successfully. Please check your email for verification.');
           setIsLogin(true);
           setFormData({ email: formData.email, password: '', name: '' });
           return;
-        }
-
-        if (isAdmin) {
-          console.log('Admin account created, redirecting to admin dashboard');
-          navigate('/admin', { replace: true });
-        } else {
-          console.log('User account created, redirecting to dashboard');
-          navigate('/dashboard', { replace: true });
         }
       }
     } catch (error) {
