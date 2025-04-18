@@ -37,69 +37,65 @@ const LoginPage = () => {
           throw error;
         }
 
-        // Check for user profile
-        let { data: profile, error: profileError } = await supabase
+        // Fetch user profile (assumes profile exists due to trigger)
+        const { data: profile, error: profileError } = await supabase
           .from('users')
           .select('id, username, gmail, total_points')
           .eq('id', data.user.id)
           .single();
 
         if (profileError || !profile) {
-          // Create profile if missing
-          const defaultUsername = data.user.email.split('@')[0];
-          const { error: insertError } = await supabase
-            .from('users')
-            .insert({
-              id: data.user.id,
-              username: defaultUsername,
-              gmail: data.user.email,
-              total_points: 0,
-            });
-
-          if (insertError) {
-            console.error('Profile creation error:', insertError);
-            throw new Error('Failed to create user profile');
-          }
-
-          // Fetch created profile
-          const { data: newProfile, error: newProfileError } = await supabase
-            .from('users')
-            .select('id, username, gmail, total_points')
-            .eq('id', data.user.id)
-            .single();
-
-          if (newProfileError || !newProfile) {
-            throw new Error('Failed to retrieve new user profile');
-          }
-          profile = newProfile;
+          console.error('Profile fetch error:', profileError);
+          throw new Error('User profile not found');
         }
 
         console.log('Login successful, user profile:', profile);
 
+        // Store minimal user data (avoid sensitive info in localStorage)
         localStorage.setItem('user', JSON.stringify({
           id: profile.id,
           username: profile.username,
-          gmail: profile.gmail,
           total_points: profile.total_points,
         }));
 
         navigate('/dashboard', { replace: true });
       } else {
         // Handle signup
-        // Check if gmail or username exists
-        const { data: existingUser, error: checkError } = await supabase
+        // Validate username
+        const trimmedUsername = formData.username.trim();
+        if (!trimmedUsername) {
+          throw new Error('Username cannot be empty');
+        }
+
+        // Check if gmail exists
+        const { data: existingGmail, error: gmailError } = await supabase
           .from('users')
           .select('id')
-          .or(`gmail.eq.${formData.gmail},username.eq.${formData.username}`)
-          .single();
+          .eq('gmail', formData.gmail);
 
-        if (existingUser) {
-          throw new Error('Gmail or username already registered. Please log in.');
+        if (gmailError) {
+          console.error('Gmail check error:', gmailError);
+          throw new Error('Failed to check Gmail availability');
         }
-        if (checkError && !checkError.message.includes('0 rows')) {
-          throw checkError;
+        if (existingGmail && existingGmail.length > 0) {
+          throw new Error('Gmail already registered. Please log in.');
         }
 
+        // Check if username exists
+        const { data: existingUsername, error: usernameError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('username', trimmedUsername);
+
+        if (usernameError) {
+          console.error('Username check error:', usernameError);
+          throw new Error('Failed to check username availability');
+        }
+        if (existingUsername && existingUsername.length > 0) {
+          throw new Error('Username already taken. Please choose another.');
+        }
+
+        // Sign up user
         const { data, error } = await supabase.auth.signUp({
           email: formData.gmail,
           password: formData.password,
@@ -112,32 +108,18 @@ const LoginPage = () => {
           throw error;
         }
 
-        // Insert user profile
-        const { error: profileError } = await supabase
-          .from('users')
-          .insert({
-            id: data.user.id,
-            username: formData.username.trim() || data.user.email.split('@')[0],
-            gmail: data.user.email,
-            total_points: 0,
-          });
-
-        if (profileError) {
-          console.error('Profile insert error:', profileError);
-          throw new Error('Failed to create user profile');
-        }
-
         console.log('User account created, user:', data.user);
 
         if (data.session) {
+          // Auto-login after signup (if email confirmation is disabled)
           localStorage.setItem('user', JSON.stringify({
             id: data.user.id,
-            username: formData.username.trim() || data.user.email.split('@')[0],
-            gmail: data.user.email,
+            username: trimmedUsername,
             total_points: 0,
           }));
           navigate('/dashboard', { replace: true });
         } else {
+          // Email confirmation required
           setError('Account created! Please check your Gmail to confirm, then log in.');
           setFormData({ gmail: '', password: '', username: '' });
         }
@@ -145,7 +127,6 @@ const LoginPage = () => {
     } catch (error) {
       console.error('Authentication error:', error);
       setError(error.message || 'Authentication failed');
-      setFormData({ gmail: '', password: '', username: '' });
     }
   };
 
