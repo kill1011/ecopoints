@@ -30,17 +30,45 @@ const LoginPage = () => {
           if (error.message.includes('Invalid login')) {
             throw new Error('Incorrect email or password');
           }
+          if (error.message.includes('Email not confirmed')) {
+            throw new Error('Please confirm your email before logging in');
+          }
           throw error;
         }
 
-        const { data: profile, error: profileError } = await supabase
+        // Check for user profile
+        let { data: profile, error: profileError } = await supabase
           .from('users')
           .select('id, email, total_points')
           .eq('id', data.user.id)
           .single();
 
         if (profileError || !profile) {
-          throw new Error('User profile not found. Please sign up.');
+          // Create profile if missing
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert({
+              id: data.user.id,
+              email: data.user.email,
+              total_points: 0,
+            });
+
+          if (insertError) {
+            console.error('Profile creation error:', insertError);
+            throw new Error('Failed to create user profile');
+          }
+
+          // Fetch created profile
+          const { data: newProfile, error: newProfileError } = await supabase
+            .from('users')
+            .select('id, email, total_points')
+            .eq('id', data.user.id)
+            .single();
+
+          if (newProfileError || !newProfile) {
+            throw new Error('Failed to retrieve new user profile');
+          }
+          profile = newProfile;
         }
 
         console.log('Login successful, user profile:', profile);
@@ -48,13 +76,13 @@ const LoginPage = () => {
         localStorage.setItem('user', JSON.stringify({
           id: profile.id,
           email: profile.email,
-          total_points: profile.total_points
+          total_points: profile.total_points,
         }));
 
         navigate('/dashboard', { replace: true });
       } else {
         // Handle signup
-        // Check if email already exists
+        // Check if email exists in users
         const { data: existingUser, error: checkError } = await supabase
           .from('users')
           .select('id')
@@ -85,7 +113,7 @@ const LoginPage = () => {
           .from('users')
           .insert({
             id: data.user.id,
-            email: formData.email,
+            email: data.user.email,
             total_points: 0,
           });
 
@@ -100,7 +128,7 @@ const LoginPage = () => {
           localStorage.setItem('user', JSON.stringify({
             id: data.user.id,
             email: data.user.email,
-            total_points: 0
+            total_points: 0,
           }));
           navigate('/dashboard', { replace: true });
         } else {
