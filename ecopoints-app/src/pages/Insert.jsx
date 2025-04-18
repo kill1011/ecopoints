@@ -25,7 +25,7 @@ const Insert = () => {
   const [deviceConnected, setDeviceConnected] = useState(false);
 
   useEffect(() => {
-    console.log('Setting up subscriptions and checking device status');
+    console.log('Initializing Insert.jsx: Setting up subscriptions');
     checkDeviceStatus();
 
     const subscription = supabase
@@ -39,14 +39,14 @@ const Insert = () => {
         }
       )
       .subscribe((status) => {
-        console.log('Device status subscription status:', status);
+        console.log('Device control subscription status:', status);
       });
 
     const detectionsSubscription = supabase
       .channel('recyclable_detections')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'recyclables' },
+        { event: 'INSERT', schema: 'public', table: 'recyclables', filter: 'device_id=eq.esp32-cam-1' },
         (payload) => {
           console.log('New recyclable detection:', payload);
           handleNewDetection(payload);
@@ -151,6 +151,10 @@ const Insert = () => {
       setDetections(data || []);
     } catch (error) {
       console.error('Error fetching detections:', error);
+      setAlert({
+        type: 'error',
+        message: 'Failed to fetch recent detections',
+      });
     }
   };
 
@@ -182,6 +186,8 @@ const Insert = () => {
         message: `New detection: ${newDetection.material} (${newDetection.quantity}, Confidence: ${newDetection.confidence.toFixed(2)})`,
       });
       setDeviceConnected(true);
+      // Force fetch as a fallback
+      fetchRecentDetections();
     }
   };
 
@@ -246,6 +252,7 @@ const Insert = () => {
       setIsSensing(false);
       setSystemStatus('Idle');
       setAlert({ type: 'success', message: 'Sensor stopped' });
+      await fetchRecentDetections(); // Ensure detections are fetched after stopping
     } catch (error) {
       console.error('Stop sensing error:', error);
       setAlert({
