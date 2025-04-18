@@ -179,21 +179,6 @@ const LoginPage = () => {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      setUser(null);
-      localStorage.removeItem('user');
-      localStorage.removeItem('token');
-      localStorage.removeItem('user_id');
-      localStorage.removeItem('is_admin');
-      navigate('/login', { replace: true });
-    } catch (error) {
-      console.error('Logout error:', error);
-      setError('Failed to log out');
-    }
-  };
 
   const handleChange = (e) => {
     setFormData({
