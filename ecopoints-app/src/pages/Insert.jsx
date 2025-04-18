@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlay, faStop, faList } from '@fortawesome/free-solid-svg-icons';
+import { faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
 import { supabase } from '../config/supabase';
 import '../styles/Insert.css';
 import Layout from '../components/Layout';
@@ -12,7 +12,6 @@ const Insert = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState(null);
-  const [detections, setDetections] = useState([]);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -40,44 +39,6 @@ const Insert = () => {
         }
 
         setUserId(session.user.id);
-
-        // Fetch initial detections
-        const { data: detectionData, error: detectionError } = await supabase
-          .from('recyclables')
-          .select('material, quantity, confidence, created_at')
-          .eq('device_id', 'esp32-cam-1')
-          .eq('user_id', session.user.id)
-          .order('created_at', { ascending: false })
-          .limit(10);
-
-        if (detectionError) {
-          console.error('Fetch detections error:', detectionError);
-          setError('Failed to load detections.');
-        } else {
-          setDetections(detectionData || []);
-        }
-
-        // Subscribe to new detections
-        const subscription = supabase
-          .channel('recyclables_changes')
-          .on(
-            'postgres_changes',
-            {
-              event: 'INSERT',
-              schema: 'public',
-              table: 'recyclables',
-              filter: `device_id=eq.esp32-cam-1&user_id=eq.${session.user.id}`,
-            },
-            (payload) => {
-              console.log('New detection:', payload);
-              setDetections((prev) => [payload.new, ...prev.slice(0, 9)]);
-            }
-          )
-          .subscribe();
-
-        return () => {
-          supabase.removeChannel(subscription);
-        };
       } catch (error) {
         console.error('Session check:', error);
         setError(error.message);
@@ -130,7 +91,7 @@ const Insert = () => {
       setIsSensing(true);
     } catch (error) {
       console.error('Start error:', error);
-      setError(error.message);
+      setError(error.message || 'Failed to start sensing.');
     } finally {
       setLoading(false);
     }
@@ -184,23 +145,6 @@ const Insert = () => {
               <FontAwesomeIcon icon={faStop} /> {loading ? 'Stopping...' : 'Stop Sensing'}
             </button>
           </div>
-        </div>
-        <div className="detections-section">
-          <h2>
-            <FontAwesomeIcon icon={faList} /> Recent Detections
-          </h2>
-          {detections.length > 0 ? (
-            <ul className="detections-list">
-              {detections.map((detection) => (
-                <li key={detection.created_at}>
-                  {detection.material} (Qty: {detection.quantity}, Confidence: {(detection.confidence * 100).toFixed(2)}%) -{' '}
-                  {new Date(detection.created_at).toLocaleString()}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No detections received. Check ESP32-CAM Serial Monitor for Supabase errors.</p>
-          )}
         </div>
       </div>
     </Layout>
