@@ -18,25 +18,35 @@ const Insert = () => {
     const checkSession = async () => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session) {
-          console.error('No session found:', sessionError);
-          setError('Please log in to start sensing.');
-          navigate('/login');
-          return;
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          throw new Error('Session error: ' + sessionError.message);
         }
+        if (!session || !session.user) {
+          console.error('No active session');
+          throw new Error('Please log in to start sensing.');
+        }
+
+        console.log('Session details:', {
+          user_id: session.user.id,
+          email: session.user.email,
+          metadata: session.user.user_metadata,
+          auth_uid: await supabase.auth.getUser().then(({ data }) => data.user?.id),
+        });
 
         const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
         if (!storedUser.id || storedUser.id !== session.user.id) {
-          console.error('Stored user ID mismatch:', storedUser.id, session.user.id);
-          setError('Invalid user session.');
-          navigate('/login');
-          return;
+          console.error('Stored user mismatch:', {
+            stored_id: storedUser.id,
+            session_id: session.user.id,
+          });
+          throw new Error('Invalid user session.');
         }
 
-        setUser({ id: session.user.id, name: storedUser.name });
-        console.log('Authenticated user:', { id: session.user.id, name: storedUser.name });
+        setUser({ id: session.user.id, name: storedUser.name || session.user.email });
+        console.log('User set:', { id: session.user.id, name: storedUser.name });
 
-        // Fetch existing detections for this user
+        // Fetch detections
         const { data: detectionData, error: detectionError } = await supabase
           .from('recyclables')
           .select('material, quantity, confidence, created_at')
@@ -45,11 +55,14 @@ const Insert = () => {
           .order('created_at', { ascending: false })
           .limit(10);
 
-        if (detectionError) throw detectionError;
+        if (detectionError) {
+          console.error('Detection fetch error:', detectionError);
+          throw detectionError;
+        }
 
         setDetections(detectionData || []);
 
-        // Subscribe to new detections
+        // Subscribe to detections
         const subscription = supabase
           .channel('recyclables_changes')
           .on(
@@ -68,11 +81,12 @@ const Insert = () => {
           .subscribe();
 
         return () => {
+          console.log('Removing subscription');
           supabase.removeChannel(subscription);
         };
       } catch (error) {
-        console.error('Session check error:', error);
-        setError('Failed to initialize: ' + error.message);
+        console.error('Session check failed:', error);
+        setError(error.message || 'Failed to initialize.');
         navigate('/login');
       }
     };
@@ -92,38 +106,72 @@ const Insert = () => {
 
     try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session) {
+      if (sessionError || !session || !session.user) {
+        console.error('Session error on start:', sessionError);
         throw new Error('Authentication required');
       }
 
       if (session.user.id !== user.id) {
+        console.error('User ID mismatch:', {
+          session_id: session.user.id,
+          user_id: user.id,
+        });
         throw new Error('Session user ID mismatch');
       }
 
-      console.log('Inserting command for user:', user.id);
+      // Log auth context
+      const authUser = await supabase.auth.getUser();
+      console.log('Auth context:', {
+        auth_uid: authUser.data.user?.id,
+        insert_user_id: user.id,
+        is_authenticated: !!authUser.data.user,
+      });
+
+      // Minimal insert payload
+      const payload = {
+        device_id: 'esp32-cam-1',
+        command: 'start',
+        user_id: user.id,
+      };
+      console.log('Insert payload:', payload);
 
       const { data, error: insertError } = await supabase
         .from('device_controls')
-        .insert({
-          device_id: 'esp32-cam-1',
-          command: 'start',
-          user_id: user.id,
-          created_at: new Date().toISOString(),
-        })
+        .insert(payload)
         .select()
         .single();
 
       if (insertError) {
-        console.error('Insert error:', insertError);
+        console.error('Insert error:', {
+          message: insertError.message,
+          details: insertError.details,
+          hint: insertError.hint,
+          code: insertError.code,
+        });
         throw new Error(`Start failed: ${insertError.message}`);
       }
 
       console.log('Command inserted:', data);
       setIsSensing(true);
       setError('');
+
+      // Verify insert
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('device_controls')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('command', 'start')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (verifyError) {
+        console.error('Verify error:', verifyError);
+      } else {
+        console.log('Verified inserted row:', verifyData);
+      }
     } catch (error) {
       console.error('Start sensing error:', error);
-      setError(error.message || 'Failed to start sensing');
+      setError(error.message || 'Failed to start sensing. Please check your session and try again.');
     } finally {
       setLoading(false);
     }
@@ -139,24 +187,30 @@ const Insert = () => {
         throw new Error('Authentication required');
       }
 
+      const payload = {
+        device_id: 'esp32-cam-1',
+        command: 'stop',
+        user_id: user.id,
+      };
+      console.log('Stop payload:', payload);
+
       const { data, error: insertError } = await supabase
         .from('device_controls')
-        .insert({
-          device_id: 'esp32-cam-1',
-          command: 'stop',
-          user_id: user.id,
-          created_at: new Date().toISOString(),
-        })
+        .insert(payload)
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('Stop insert error:', insertError);
+        throw new Error(`Stop failed: ${insertError.message}`);
+      }
 
+      console.log('Stop command inserted:', data);
       setIsSensing(false);
       setError('');
     } catch (error) {
       console.error('Stop sensing error:', error);
-      setError(error.message || 'Failed to stop sensing');
+      setError(error.message || 'Failed to stop sensing.');
     } finally {
       setLoading(false);
     }
