@@ -57,6 +57,7 @@ const LoginPage = () => {
         }
       } else {
         // Handle signup
+        console.log('Attempting signup with:', formData.email);
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
           password: formData.password,
@@ -64,13 +65,16 @@ const LoginPage = () => {
             data: { name: formData.name },
           },
         });
+        console.log('SignUp Response:', data, 'Error:', error);
+        if (error) {
+          if (error.message.includes('Gmail')) {
+            throw new Error('Failed to verify Gmail address. Please try a different email or contact support.');
+          }
+          throw new Error(error.message || 'Failed to create account');
+        }
 
-        if (error) throw new Error(error.message || 'Failed to create account');
-
-        // Determine admin status based on email
         const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
 
-        // Insert user profile
         const { data: profile, error: profileError } = await supabase
           .from('users')
           .insert([
@@ -87,17 +91,23 @@ const LoginPage = () => {
           .select()
           .single();
 
-        if (profileError) throw new Error(profileError.message || 'Failed to create user profile');
+        if (profileError) {
+          console.error('Profile Insert Error:', profileError);
+          throw new Error(profileError.message || 'Failed to create user profile');
+        }
 
-        // Store user data in localStorage if session exists
         if (data.session) {
           localStorage.setItem('token', data.session.access_token);
           localStorage.setItem('user', JSON.stringify(profile));
           localStorage.setItem('user_id', profile.id);
           localStorage.setItem('is_admin', profile.is_admin.toString());
+        } else {
+          setError('Account created successfully. Please log in to continue.');
+          setIsLogin(true);
+          setFormData({ email: formData.email, password: '', name: '' });
+          return;
         }
 
-        // Redirect based on admin status
         if (isAdmin) {
           console.log('Admin account created, redirecting to admin dashboard');
           navigate('/admin', { replace: true });
@@ -114,7 +124,7 @@ const LoginPage = () => {
           : error.message || 'Authentication failed'
       );
     }
-    };
+  };
 
   const handleChange = (e) => {
     setFormData({
