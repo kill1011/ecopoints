@@ -34,24 +34,79 @@ const LoginPage = () => {
           if (error.message.includes('Email not confirmed')) {
             throw new Error('Please confirm your Gmail before logging in');
           }
-          throw error;
+          throw new Error('Login failed: ' + error.message);
         }
 
-        // Fetch user profile (assumes profile exists due to trigger)
-        const { data: profile, error: profileError } = await supabase
+        // Check for user profile
+        let { data: profile, error: profileError } = await supabase
           .from('users')
           .select('id, username, gmail, total_points')
           .eq('id', data.user.id)
           .single();
 
-        if (profileError || !profile) {
+        if (profileError && !profileError.message.includes('0 rows')) {
           console.error('Profile fetch error:', profileError);
-          throw new Error('User profile not found');
+          throw new Error('Failed to fetch user profile');
+        }
+
+        if (!profile) {
+          // Create profile if missing
+          const defaultUsername = data.user.email.split('@')[0];
+          // Check for duplicate username
+          const { data: existingUsername, error: usernameError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('username', defaultUsername);
+
+          if (usernameError) {
+            console.error('Username check error:', usernameError);
+            throw new Error('Failed to check username availability');
+          }
+          if (existingUsername && existingUsername.length > 0) {
+            // Append timestamp to avoid duplicates
+            const timestamp = Date.now();
+            defaultUsername = `${defaultUsername}_${timestamp}`;
+          }
+
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert({
+              id: data.user.id,
+              username: defaultUsername,
+              gmail: data.user.email,
+              total_points: 0,
+            });
+
+          if (insertError) {
+            console.error('Profile creation error:', insertError);
+            if (insertError.code === '23503') {
+              throw new Error('Profile creation failed: User not found in authentication system');
+            }
+            if (insertError.code === '23505') {
+              throw new Error('Profile creation failed: Username or Gmail already exists');
+            }
+            if (insertError.code === '42501') {
+              throw new Error('Profile creation failed: Insufficient permissions');
+            }
+            throw new Error('Failed to create user profile: ' + insertError.message);
+          }
+
+          // Fetch created profile
+          const { data: newProfile, error: newProfileError } = await supabase
+            .from('users')
+            .select('id, username, gmail, total_points')
+            .eq('id', data.user.id)
+            .single();
+
+          if (newProfileError || !newProfile) {
+            console.error('New profile fetch error:', newProfileError);
+            throw new Error('Failed to retrieve new user profile');
+          }
+          profile = newProfile;
         }
 
         console.log('Login successful, user profile:', profile);
 
-        // Store minimal user data (avoid sensitive info in localStorage)
         localStorage.setItem('user', JSON.stringify({
           id: profile.id,
           username: profile.username,
@@ -61,13 +116,12 @@ const LoginPage = () => {
         navigate('/dashboard', { replace: true });
       } else {
         // Handle signup
-        // Validate username
         const trimmedUsername = formData.username.trim();
         if (!trimmedUsername) {
           throw new Error('Username cannot be empty');
         }
 
-        // Check if gmail exists
+        // Check if gmail or username exists
         const { data: existingGmail, error: gmailError } = await supabase
           .from('users')
           .select('id')
@@ -81,7 +135,6 @@ const LoginPage = () => {
           throw new Error('Gmail already registered. Please log in.');
         }
 
-        // Check if username exists
         const { data: existingUsername, error: usernameError } = await supabase
           .from('users')
           .select('id')
@@ -95,23 +148,25 @@ const LoginPage = () => {
           throw new Error('Username already taken. Please choose another.');
         }
 
-        // Sign up user
         const { data, error } = await supabase.auth.signUp({
           email: formData.gmail,
           password: formData.password,
+          options: {
+            data: { username: trimmedUsername },
+          },
         });
 
         if (error) {
           if (error.message.includes('already registered')) {
             throw new Error('Gmail already registered. Please log in.');
           }
-          throw error;
+          throw new Error('Signup failed: ' + error.message);
         }
 
+        // Profile is created by trigger, no need to insert here
         console.log('User account created, user:', data.user);
 
         if (data.session) {
-          // Auto-login after signup (if email confirmation is disabled)
           localStorage.setItem('user', JSON.stringify({
             id: data.user.id,
             username: trimmedUsername,
@@ -119,7 +174,6 @@ const LoginPage = () => {
           }));
           navigate('/dashboard', { replace: true });
         } else {
-          // Email confirmation required
           setError('Account created! Please check your Gmail to confirm, then log in.');
           setFormData({ gmail: '', password: '', username: '' });
         }
@@ -144,7 +198,7 @@ const LoginPage = () => {
       </header>
       <div className="login-container">
         <div className="login-card">
-          <div className="login-header">
+          <div class="login-header">
             <h1>{isLogin ? 'Welcome Back!' : 'Join EcoPoints'}</h1>
             <p>{isLogin ? 'Sign in to continue' : 'Create your account'}</p>
           </div>
