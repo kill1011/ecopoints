@@ -21,7 +21,6 @@ const LoginPage = () => {
 
     try {
       if (isLogin) {
-        // Handle login
         console.log('Attempting login with:', formData.email);
         const { data, error } = await supabase.auth.signInWithPassword({
           email: formData.email,
@@ -30,15 +29,17 @@ const LoginPage = () => {
 
         if (error) throw new Error(error.message || 'Invalid email or password');
 
-        // Fetch user profile
         const { data: profile, error: profileError } = await supabase
           .from('users')
           .select('id, email, name, points, bottles, cans, is_admin')
           .eq('id', data.user.id)
-          .single();
+          .maybeSingle();
 
-        if (profileError) throw new Error(profileError.message || 'Failed to fetch user profile');
-        if (!profile) throw new Error('User profile not found');
+        if (profileError) {
+          console.error('Profile Fetch Error:', profileError);
+          throw new Error(profileError.message || 'Failed to fetch user profile');
+        }
+        if (!profile) throw new Error('User profile not found. Please sign up.');
 
         console.log('Login successful, user profile:', profile);
 
@@ -55,61 +56,26 @@ const LoginPage = () => {
           navigate('/dashboard', { replace: true });
         }
       } else {
-        // Handle signup
         console.log('Attempting signup with:', formData.email);
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
           password: formData.password,
           options: {
             data: { name: formData.name },
+            emailRedirectTo: window.location.origin + '/dashboard',
           },
         });
-        console.log('SignUp Response:', data, 'Error:', error);
+        console.log('SignUp Response:', { user: data.user, session: data.session, error });
+
         if (error) {
-          if (error.message.includes('permission')) {
-            throw new Error('Access denied. Please contact support.');
-          }
+          console.error('SignUp Error:', error);
           throw new Error(error.message || 'Failed to create account');
         }
 
         const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
 
-        // Check for existing user profile to avoid duplicates
-        const { data: existingProfile, error: checkError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', data.user.id)
-          .maybeSingle();
-
-        if (checkError) {
-          console.error('Check Profile Error:', checkError);
-          throw new Error(checkError.message || 'Failed to check user profile');
-        }
-
-        if (existingProfile) {
-          console.log('User profile already exists, skipping insert');
-        } else {
-          const { data: profile, error: profileError } = await supabase
-            .from('users')
-            .insert([
-              {
-                id: data.user.id,
-                email: formData.email,
-                name: formData.name,
-                points: 0,
-                bottles: 0,
-                cans: 0,
-                is_admin: isAdmin,
-              },
-            ])
-            .select()
-            .single();
-
-          if (profileError) {
-            console.error('Profile Insert Error:', profileError);
-            throw new Error(profileError.message || 'Database error saving new user');
-          }
-        }
+        // Temporarily skip insert to test if auth succeeds
+        console.log('Skipping users table insert to isolate error. User ID:', data.user.id);
 
         if (data.session) {
           localStorage.setItem('token', data.session.access_token);
