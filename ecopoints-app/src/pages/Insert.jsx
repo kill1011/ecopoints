@@ -41,7 +41,6 @@ const Insert = () => {
 
         setUserId(session.user.id);
 
-        // Fetch initial detections
         const { data: detectionData, error: detectionError } = await supabase
           .from('recyclables')
           .select('material, quantity, confidence, created_at')
@@ -57,7 +56,6 @@ const Insert = () => {
           setDetections(detectionData || []);
         }
 
-        // Subscribe to new detections
         const subscription = supabase
           .channel('recyclables_changes')
           .on(
