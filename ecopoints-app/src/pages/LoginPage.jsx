@@ -13,186 +13,112 @@ const LoginPage = () => {
     name: '',
   });
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
 
     try {
       if (isLogin) {
-        console.log('Attempting login with:', formData.email);
+        // Handle login
         const { data, error } = await supabase.auth.signInWithPassword({
           email: formData.email,
           password: formData.password,
         });
 
-        if (error) throw new Error(error.message || 'Invalid email or password');
+        if (error) throw error;
 
-        console.log('Login auth successful, user:', data.user);
-
-        // Fetch user profile
+          // Get user profile from users table with better error handling
         const { data: profile, error: profileError } = await supabase
           .from('users')
           .select('*')
           .eq('email', formData.email)
           .single();
 
-        if (profileError) throw new Error(profileError.message || 'Error fetching profile');
-        if (!profile) throw new Error('User profile not found');
+        if (profileError) throw profileError;
+
+        if (!profile) {
+          throw new Error('User profile not found');
+        }
 
         console.log('Login successful, user profile:', profile);
 
-        // Store user data
+        // Store user data in localStorage
         localStorage.setItem('token', data.session.access_token);
         localStorage.setItem('user', JSON.stringify(profile));
         localStorage.setItem('user_id', profile.id);
         localStorage.setItem('is_admin', profile.is_admin);
 
-        // Redirect based on admin status
+        // Check if user is admin and redirect accordingly
         if (profile.is_admin) {
           console.log('Admin user detected, redirecting to admin dashboard');
-          navigate('/admin/admindashboard', { replace: true });
+          navigate('/admin/admindashboard', { replace: true }); // Changed from /admin/dashboard
         } else {
           console.log('Regular user detected, redirecting to user dashboard');
           navigate('/dashboard', { replace: true });
         }
       } else {
-        console.log('Testing table access...');
-        const { data: test, error: testError } = await supabase.from('users').select('id').limit(1);
-        console.log('Test Query:', {
-          test,
-          testError: testError ? {
-            message: testError.message,
-            code: testError.code,
-            details: testError.details,
-            timestamp: new Date().toISOString(),
-          } : null,
-        });
-
-        console.log('Attempting signup with:', formData.email);
-
-        // Call Edge Function with retries
-        let signupData = null;
-        let signupError = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          console.log(`Signup attempt ${attempt}...`);
-          try {
-            const startTime = Date.now();
-            const response = await fetch('https://kvpnjoheifhfwekwkoa.supabase.co/functions/v1/signup-user', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                email: formData.email,
-                password: formData.password,
+        try {
+          // Handle signup
+          const { data, error } = await supabase.auth.signUp({
+            email: formData.email,
+            password: formData.password,
+            options: {
+              data: {
                 name: formData.name,
-              }),
-            });
-
-            console.log('Signup request duration:', Date.now() - startTime, 'ms');
-
-            const result = await response.json();
-            console.log('Fetch Response:', {
-              status: response.status,
-              statusText: response.statusText,
-              headers: Object.fromEntries(response.headers.entries()),
-              body: result,
-              attempt,
-              timestamp: new Date().toISOString(),
-            });
-
-            if (!response.ok) {
-              console.error('Signup response error:', result);
-              signupError = { message: result.error || `HTTP ${response.status}: ${response.statusText}` };
-              if (result.error?.includes('already registered')) {
-                throw new Error('Email already registered. Please log in or use a different email.');
               }
-              if (response.status >= 400 && response.status < 500) {
-                // Don't retry on client errors (e.g., 400, 401, 404)
-                throw new Error(signupError.message);
-              }
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
-              continue;
-            }
+            },
+          });
 
-            signupData = result;
-            signupError = null;
-            console.log('Signup Response:', {
-              user: signupData.user,
-              session: signupData.session ? {
-                access_token: signupData.session.access_token?.slice(0, 10) + '...',
-                expires_at: signupData.session.expires_at,
-              } : null,
-              attempt,
-              timestamp: new Date().toISOString(),
-            });
-            break;
-          } catch (fetchError) {
-            console.error('Fetch error during signup:', {
-              message: fetchError.message,
-              name: fetchError.name,
-              cause: fetchError.cause,
-              stack: fetchError.stack,
-              attempt,
-              timestamp: new Date().toISOString(),
-            });
-            signupError = { message: fetchError.message || 'Failed to reach signup service' };
-            if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
-              // Network or CORS issue, retry
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
-              continue;
+          if (error) throw error;
+
+          // Check if this is an admin email domain
+          const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+
+          // Create user profile with better error handling
+          const { error: profileError } = await supabase
+            .from('users')
+            .insert([
+              {
+                id: data.user.id,
+                email: formData.email,
+                name: formData.name,
+                points: 0,
+                money: 0,
+                is_admin: isAdmin, // Set admin status based on email
+              },
+            ]);
+
+          // Check if data exists and redirect accordingly
+          const { data: checkData } = await supabase
+            .from('users')
+            .select()
+            .eq('email', formData.email)
+            .single();
+
+          if (checkData) {
+            localStorage.setItem('token', data.session?.access_token);
+            localStorage.setItem('user', JSON.stringify(checkData));
+            
+            if (isAdmin) {
+              console.log('Admin account created, redirecting to admin dashboard');
+              navigate('/admin/dashboard');
+            } else {
+              console.log('User account created, redirecting to dashboard');
+              navigate('/dashboard');
             }
-            throw new Error(signupError.message);
+          } else if (profileError) {
+            throw profileError;
           }
-        }
-
-        if (signupError || !signupData?.user) {
-          console.error('Signup Error:', signupError);
-          throw new Error(signupError.message || 'Failed to create account');
-        }
-
-        console.log('Signup successful, user:', signupData.user);
-
-        // Verify profile
-        const { data: profile, error: profileFetchError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('email', formData.email)
-          .single();
-
-        if (profileFetchError || !profile) {
-          console.error('Profile fetch error:', profileFetchError);
-          throw new Error(profileFetchError?.message || 'User profile not found after signup');
-        }
-
-        console.log('User profile retrieved:', profile);
-
-        // Store user data
-        localStorage.setItem('token', signupData.session.access_token);
-        localStorage.setItem('user', JSON.stringify(profile));
-
-        // Redirect based on admin status
-        if (profile.is_admin) {
-          console.log('Admin account created, redirecting to admin dashboard');
-          navigate('/admin/admindashboard');
-        } else {
-          console.log('User account created, redirecting to dashboard');
-          navigate('/dashboard');
+        } catch (error) {
+          console.error('Authentication error:', error);
+          setError(error.message || 'Authentication failed');
         }
       }
     } catch (error) {
-      console.error('Authentication error:', {
-        message: error.message,
-        code: error.code,
-        status: error.status,
-        stack: error.stack,
-        timestamp: new Date().toISOString(),
-      });
-      setError(error.message || 'Authentication failed. Please try again.');
-    } finally {
-      setIsLoading(false);
+      console.error('Authentication error:', error);
+      setError(error.message || 'Authentication failed');
     }
   };
 
@@ -259,20 +185,17 @@ const LoginPage = () => {
               <FontAwesomeIcon icon={faLock} className="input-icon" />
             </div>
 
-            <button type="submit" className="submit-button" disabled={isLoading}>
-              {isLoading ? 'Processing...' : isLogin ? 'Sign In' : 'Create Account'}
+            <button type="submit" className="submit-button">
+              {isLogin ? 'Sign In' : 'Create Account'}
             </button>
           </form>
 
           <div className="toggle-auth">
-            <button
-              onClick={() => {
-                setIsLogin(!isLogin);
-                setError('');
-                setFormData({ email: '', password: '', name: '' });
-              }}
-              disabled={isLoading}
-            >
+            <button onClick={() => {
+              setIsLogin(!isLogin);
+              setError('');
+              setFormData({ email: '', password: '', name: '' });
+            }}>
               {isLogin ? 'New to EcoPoints? Create an account' : 'Already have an account? Sign in'}
             </button>
           </div>
