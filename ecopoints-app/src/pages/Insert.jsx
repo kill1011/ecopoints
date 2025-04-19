@@ -89,31 +89,21 @@ const Insert = () => {
   };
 
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    const token = localStorage.getItem('token');
-    const userId = localStorage.getItem('user_id');
-
-    if (!userId || !token) {
-      window.location.href = '/login';
-      return;
-    }
-
     const fetchUserData = async () => {
       try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercerl.app';
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
         const response = await fetch(`${apiUrl}/api/user-stats/${userId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         });
-    
-        // Check if the response is JSON
+
         const contentType = response.headers.get('Content-Type');
         if (!contentType || !contentType.includes('application/json')) {
           throw new Error('Server did not return JSON. Check if the endpoint exists and the server is running.');
         }
-    
+
         if (response.status === 401 || response.status === 403) {
           localStorage.removeItem('token');
           localStorage.removeItem('user_id');
@@ -121,11 +111,10 @@ const Insert = () => {
           window.location.href = '/login';
           return;
         }
-    
         if (!response.ok) {
           throw new Error('Failed to fetch user data');
         }
-    
+
         const data = await response.json();
         setUserData(data);
       } catch (error) {
