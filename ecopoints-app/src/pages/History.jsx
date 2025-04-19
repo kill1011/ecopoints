@@ -32,7 +32,6 @@ const History = () => {
         throw new Error('Authentication required');
       }
 
-      // Get all transactions including redemption requests
       const [{ data: redemptionData, error: redemptionError }, { data: recyclableData, error: recyclableError }] = await Promise.all([
         // Get redemption requests
         supabase
@@ -40,7 +39,7 @@ const History = () => {
           .select('*')
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
-
+      
         // Get recyclable transactions
         supabase
           .from('recyclable_transactions')
@@ -49,8 +48,14 @@ const History = () => {
           .order('created_at', { ascending: false })
       ]);
 
-      if (redemptionError) throw redemptionError;
-      if (recyclableError) throw recyclableError;
+      if (redemptionError) {
+        console.error("Redemption error details:", redemptionError);
+        throw redemptionError;
+      }
+      if (recyclableError) {
+        console.error("Recyclable error details:", recyclableError);
+        throw recyclableError;
+      }
 
       // Transform redemption requests
       const redemptions = (redemptionData || []).map(item => ({

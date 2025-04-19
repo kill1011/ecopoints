@@ -12,7 +12,7 @@ const port = process.env.PORT || 5000;
 
 // Update CORS configuration for direct connection
 app.use(cors({
-  origin: 'http://localhost:3000'|| 'http://ecopoints-app.com',
+  origin: 'http://localhost:3000'|| 'https://ecopoints-teal.vercel.app',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
