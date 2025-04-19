@@ -100,24 +100,34 @@ const Insert = () => {
 
     const fetchUserData = async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/user-stats/${userId}`, {
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000'; // Fallback for local dev
+        const response = await fetch(`${apiUrl}/api/user-stats/${userId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
+            'Content-Type': 'application/json',
+          },
         });
-        
+    
+        if (response.status === 401 || response.status === 403) {
+          // Token is invalid or expired, redirect to login
+          localStorage.removeItem('token');
+          localStorage.removeItem('user_id');
+          localStorage.removeItem('user');
+          window.location.href = '/login';
+          return;
+        }
+    
         if (!response.ok) {
           throw new Error('Failed to fetch user data');
         }
-
+    
         const data = await response.json();
         setUserData(data);
       } catch (error) {
         console.error('Error fetching user data:', error);
         setAlert({
           type: 'error',
-          message: 'Failed to load user data'
+          message: 'Failed to load user data. Please try logging in again.',
         });
       }
     };
