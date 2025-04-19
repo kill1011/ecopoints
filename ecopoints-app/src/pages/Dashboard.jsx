@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faExchangeAlt, faHistory, faUser } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faExchangeAlt, faUser } from '@fortawesome/free-solid-svg-icons';
 import '../styles/Dashboard.css';
 import { supabase } from '../config/supabase';
 import Header from '../components/Header';
@@ -9,13 +9,15 @@ import Sidebar from '../components/Sidebar';
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const [stats, setStats] = useState({
-    name: user.name || 'Guest',
-    points: 0,
-    money: 0,
-    bottles: 0,
-    cans: 0,
+  const [stats, setStats] = useState(() => {
+    const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+    return {
+      name: storedUser.name || 'Guest',
+      points: storedUser.points || 0,
+      money: storedUser.money || 0,
+      bottles: storedUser.bottles || 0,
+      cans: storedUser.cans || 0,
+    };
   });
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -35,25 +37,28 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchUserStats = async () => {
       try {
-        // Get current session first
+        // Get current session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
         if (sessionError || !session) {
-          setError('Authentication required');
+          setError('Authentication required. Please log in again.');
+          localStorage.clear(); // Clear invalid session data
           navigate('/login');
           return;
         }
 
-        // Use the session user ID for the query
         const { data: userData, error } = await supabase
-          .from('users')
-          .select('points, money, name, bottles, cans')
-          .eq('id', session.user.id)
-          .limit(1)  // Add limit to ensure single row
-          .maybeSingle();  // Use maybeSingle instead of single
-
+        .from('users')
+        .select('points, name, bottles, cans')
+        .eq('id', session.user.id)
+        .limit(1)
+        .maybeSingle();
+        
         if (error) {
           console.error('Database Error:', error);
+          if (error.message.includes('infinite recursion')) {
+            throw new Error('Database access error: Security policy issue. Please contact support.');
+          }
           throw new Error(error.message);
         }
 
@@ -66,41 +71,60 @@ const Dashboard = () => {
             .insert([{
               id: session.user.id,
               name: session.user.user_metadata?.name || 'Guest',
+              email: session.user.email,
               points: 0,
-              money: 0,
               bottles: 0,
-              cans: 0
+              cans: 0,
+              money: 0,
+              is_admin: false,
             }])
             .select()
             .single();
 
-          if (createError) throw createError;
+          if (createError) {
+            console.error('Profile creation error:', createError);
+            throw new Error('Failed to create user profile: ' + createError.message);
+          }
+
+          // Update localStorage with the new user profile
+          localStorage.setItem('user', JSON.stringify(newUser));
           
-          // Use the newly created user data
           setStats({
             name: newUser.name,
             points: 0,
             money: 0,
             bottles: 0,
-            cans: 0
+            cans: 0,
           });
         } else {
-          // Calculate money based on points
           const calculatedMoney = calculateMoneyFromPoints(userData.points || 0);
-          setStats({
+          const updatedStats = {
             name: userData.name || 'Guest',
             points: Number(userData.points) || 0,
             money: calculatedMoney,
             bottles: Number(userData.bottles) || 0,
-            cans: Number(userData.cans) || 0
-          });
+            cans: Number(userData.cans) || 0,
+          };
+
+          // Update localStorage to keep it in sync
+          localStorage.setItem('user', JSON.stringify({
+            id: session.user.id,
+            email: session.user.email,
+            name: updatedStats.name,
+            points: updatedStats.points,
+            money: updatedStats.money,
+            bottles: updatedStats.bottles,
+            cans: updatedStats.cans,
+            is_admin: JSON.parse(localStorage.getItem('is_admin') || 'false'),
+          }));
+
+          setStats(updatedStats);
         }
 
         setError(null);
-
       } catch (error) {
         console.error('Error fetching user data:', error);
-        setError('Error loading user data. Please try again.');
+        setError(error.message || 'Error loading user data. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -165,4 +189,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default Dashboard; 

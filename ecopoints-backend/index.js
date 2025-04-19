@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
 import { supabase } from './config/supabase.js';
 
 dotenv.config();
@@ -10,37 +9,24 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Updated CORS configuration
+// CORS configuration
+// CORS configuration
 app.use(cors({
-  origin: ['https://ecopoints-teal.vercel.app', 'http://localhost:3000'],
+  origin: ['https://ecopoints-teal.vercel.app', 'http://localhost:5433'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
-
-// Add this before your routes
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'https://ecopoints-teal.vercel.app');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
+app.options('*', cors());
 
 app.use(express.json());
 
-// Simple root endpoint
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({ message: 'EcoPoints API is running' });
 });
 
-// Update health check endpoint
+// Health check endpoint
 app.get('/api/health', (req, res) => {
   console.log('Health check received from:', req.headers.origin);
   try {
@@ -55,30 +41,37 @@ app.get('/api/health', (req, res) => {
   }
 });
 
-// Login endpoint with better error handling
+// Login endpoint
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   
   try {
     console.log('Login attempt for:', email);
 
-    const { data: user, error } = await supabase
+    // Use Supabase auth for login
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError || !authData.user) {
+      console.log('Login failed:', authError?.message || 'User not found');
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Fetch user profile
+    const { data: user, error: userError } = await supabase
       .from('users')
-      .select('*')
-      .eq('email', email)
+      .select('id, name, email, is_admin')
+      .eq('id', authData.user.id)
       .single();
 
-    if (error || !user) {
-      console.log('Login failed: User not found');
-      return res.status(401).json({ message: 'Invalid credentials' });
+    if (userError || !user) {
+      console.log('Login failed: User profile not found');
+      return res.status(401).json({ message: 'User profile not found' });
     }
 
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      console.log('Login failed: Invalid password');
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
+    // Generate JWT token
     const token = jwt.sign(
       { id: user.id, is_admin: user.is_admin },
       process.env.JWT_SECRET,
@@ -101,7 +94,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Signup endpoint with better error handling
+// Signup endpoint (updated as provided)
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
 
@@ -119,6 +112,9 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
+    // Check if this is an admin email
+    const isAdmin = email.endsWith('PCCECOPOINTS@ecopoints.com');
+
     // Create auth user in Supabase
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
@@ -128,21 +124,18 @@ app.post('/api/auth/signup', async (req, res) => {
 
     if (authError) throw authError;
 
-    // Hash password for users table
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Create user profile
+    // Create user profile with all fields
     const { data: profileData, error: profileError } = await supabase
       .from('users')
       .insert([{
         id: authData.user.id,
         email: email,
         name: name,
-        password: hashedPassword,
         points: 0,
         money: 0,
-        is_admin: false
+        bottles: 0,
+        cans: 0,
+        is_admin: isAdmin
       }])
       .single();
 
@@ -150,10 +143,9 @@ app.post('/api/auth/signup', async (req, res) => {
 
     console.log('Signup successful for:', email);
     res.status(201).json({
-      message: 'Registration successful!',
+      message: authData.session ? 'Registration successful!' : 'Account created! Please verify your email.',
       user: authData.user
     });
-
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({
@@ -163,14 +155,12 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// Enhanced server startup
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+// Server startup
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
 });
 
-// Error handling for unhandled routes
+// Handle unhandled routes
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });

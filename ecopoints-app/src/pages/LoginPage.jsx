@@ -13,11 +13,13 @@ const LoginPage = () => {
     name: '',
   });
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
     try {
       if (isLogin) {
@@ -29,18 +31,15 @@ const LoginPage = () => {
 
         if (error) throw error;
 
-          // Get user profile from users table with better error handling
+        // Get user profile from users table
         const { data: profile, error: profileError } = await supabase
           .from('users')
-          .select('*')
-          .eq('email', formData.email)
+          .select('id, email, name, is_admin, points, money, bottles, cans')
+          .eq('id', data.user.id)
           .single();
 
         if (profileError) throw profileError;
-
-        if (!profile) {
-          throw new Error('User profile not found');
-        }
+        if (!profile) throw new Error('User profile not found');
 
         console.log('Login successful, user profile:', profile);
 
@@ -48,77 +47,89 @@ const LoginPage = () => {
         localStorage.setItem('token', data.session.access_token);
         localStorage.setItem('user', JSON.stringify(profile));
         localStorage.setItem('user_id', profile.id);
-        localStorage.setItem('is_admin', profile.is_admin);
+        localStorage.setItem('is_admin', profile.is_admin.toString());
 
-        // Check if user is admin and redirect accordingly
+        // Redirect based on admin status
         if (profile.is_admin) {
           console.log('Admin user detected, redirecting to admin dashboard');
-          navigate('/admin/admindashboard', { replace: true }); // Changed from /admin/dashboard
+          navigate('/admin/admindashboard', { replace: true });
         } else {
           console.log('Regular user detected, redirecting to user dashboard');
           navigate('/dashboard', { replace: true });
         }
       } else {
-        try {
-          // Handle signup
-          const { data, error } = await supabase.auth.signUp({
-            email: formData.email,
-            password: formData.password,
-            options: {
-              data: {
-                name: formData.name,
-              }
+        // Handle signup
+        // Check if the email is already registered in auth.users
+        const { data: existingAuthUser, error: authError } = await supabase
+          .rpc('check_user_exists', { email_input: formData.email });
+
+        if (authError) throw authError;
+        if (existingAuthUser) throw new Error('User already registered');
+
+        // Proceed with signup
+        const { data, error } = await supabase.auth.signUp({
+          email: formData.email,
+          password: formData.password,
+          options: {
+            data: { name: formData.name },
+          },
+        });
+
+        if (error) throw error;
+
+        // Check if this is an admin email (consider moving to backend)
+        const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+
+        // Create user profile with all fields
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert([
+            {
+              id: data.user.id,
+              email: formData.email,
+              name: formData.name,
+              points: 0,
+              money: 0,
+              bottles: 0,
+              cans: 0,
+              is_admin: isAdmin,
             },
-          });
+          ]);
 
-          if (error) throw error;
+        if (profileError) throw profileError;
 
-          // Check if this is an admin email domain
-          const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+        // Handle email confirmation case
+        if (data.session) {
+          localStorage.setItem('token', data.session.access_token);
+          localStorage.setItem('user', JSON.stringify({
+            id: data.user.id,
+            email: formData.email,
+            name: formData.name,
+            is_admin: isAdmin,
+            points: 0,
+            money: 0,
+            bottles: 0,
+            cans: 0,
+          }));
+          localStorage.setItem('user_id', data.user.id);
+          localStorage.setItem('is_admin', isAdmin.toString());
 
-          // Create user profile with better error handling
-          const { error: profileError } = await supabase
-            .from('users')
-            .insert([
-              {
-                id: data.user.id,
-                email: formData.email,
-                name: formData.name,
-                points: 0,
-                money: 0,
-                is_admin: isAdmin, // Set admin status based on email
-              },
-            ]);
-
-          // Check if data exists and redirect accordingly
-          const { data: checkData } = await supabase
-            .from('users')
-            .select()
-            .eq('email', formData.email)
-            .single();
-
-          if (checkData) {
-            localStorage.setItem('token', data.session?.access_token);
-            localStorage.setItem('user', JSON.stringify(checkData));
-            
-            if (isAdmin) {
-              console.log('Admin account created, redirecting to admin dashboard');
-              navigate('/admin/dashboard');
-            } else {
-              console.log('User account created, redirecting to dashboard');
-              navigate('/dashboard');
-            }
-          } else if (profileError) {
-            throw profileError;
+          if (isAdmin) {
+            console.log('Admin account created, redirecting to admin dashboard');
+            navigate('/admin/admindashboard', { replace: true });
+          } else {
+            console.log('User account created, redirecting to dashboard');
+            navigate('/dashboard', { replace: true });
           }
-        } catch (error) {
-          console.error('Authentication error:', error);
-          setError(error.message || 'Authentication failed');
+        } else {
+          setError('Account created! Please check your email to verify your account.');
         }
       }
     } catch (error) {
       console.error('Authentication error:', error);
       setError(error.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -185,17 +196,20 @@ const LoginPage = () => {
               <FontAwesomeIcon icon={faLock} className="input-icon" />
             </div>
 
-            <button type="submit" className="submit-button">
-              {isLogin ? 'Sign In' : 'Create Account'}
+            <button type="submit" className="submit-button" disabled={loading}>
+              {loading ? 'Processing...' : isLogin ? 'Sign In' : 'Create Account'}
             </button>
           </form>
 
           <div className="toggle-auth">
-            <button onClick={() => {
-              setIsLogin(!isLogin);
-              setError('');
-              setFormData({ email: '', password: '', name: '' });
-            }}>
+            <button
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setError('');
+                setFormData({ email: '', password: '', name: '' });
+              }}
+              disabled={loading}
+            >
               {isLogin ? 'New to EcoPoints? Create an account' : 'Already have an account? Sign in'}
             </button>
           </div>
