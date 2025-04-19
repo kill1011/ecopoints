@@ -100,7 +100,7 @@ const Insert = () => {
 
     const fetchUserData = async () => {
       try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+        const apiUrl = process.env.REACT_APP_API_URL || 'https://ecopoints-api.vercerl.app';
         const response = await fetch(`${apiUrl}/api/user-stats/${userId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
