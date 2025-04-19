@@ -265,9 +265,6 @@ const Insert = () => {
           type: 'error',
           message: 'Failed to load user data. Please try logging in again.',
         });
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 3000);
       }
     };
 
