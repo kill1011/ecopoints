@@ -10,13 +10,13 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // CORS configuration
-// CORS configuration
 app.use(cors({
   origin: ['https://ecopoints-teal.vercel.app', 'http://localhost:5433'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
+
 app.options('*', cors());
 
 app.use(express.json());
@@ -47,8 +47,6 @@ app.post('/api/login', async (req, res) => {
   
   try {
     console.log('Login attempt for:', email);
-
-    // Use Supabase auth for login
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -59,7 +57,6 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Fetch user profile
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('id, name, email, is_admin')
@@ -71,7 +68,6 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: 'User profile not found' });
     }
 
-    // Generate JWT token
     const token = jwt.sign(
       { id: user.id, is_admin: user.is_admin },
       process.env.JWT_SECRET,
@@ -94,14 +90,12 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Signup endpoint (updated as provided)
+// Signup endpoint
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, name } = req.body;
 
   try {
     console.log('Starting signup for:', email);
-
-    // Check if user already exists
     const { data: existingUser } = await supabase
       .from('users')
       .select('email')
@@ -112,10 +106,7 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // Check if this is an admin email
     const isAdmin = email.endsWith('PCCECOPOINTS@ecopoints.com');
-
-    // Create auth user in Supabase
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -124,7 +115,6 @@ app.post('/api/auth/signup', async (req, res) => {
 
     if (authError) throw authError;
 
-    // Create user profile with all fields
     const { data: profileData, error: profileError } = await supabase
       .from('users')
       .insert([{
@@ -155,17 +145,55 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// Server startup
+// User stats endpoint
+app.get('/api/user-stats/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+      if (err) {
+        return res.status(401).json({ message: 'Invalid token' });
+      }
+
+      if (decoded.id !== userId) {
+        return res.status(403).json({ message: 'Unauthorized access' });
+      }
+
+      const { data: userData, error } = await supabase
+        .from('users')
+        .select('points, bottles, cans')
+        .eq('id', userId)
+        .single();
+
+      if (error) {
+        return res.status(500).json({ message: 'Error fetching user stats', error: error.message });
+      }
+
+      if (!userData) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      res.json(userData);
+    });
+  } catch (error) {
+    console.error('Error in /api/user-stats:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
 
-// Handle unhandled routes
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
   res.status(500).json({ 
