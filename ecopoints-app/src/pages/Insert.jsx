@@ -100,7 +100,7 @@ const Insert = () => {
 
     const fetchUserData = async () => {
       try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000'; // Fallback for local dev
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
         const response = await fetch(`${apiUrl}/api/user-stats/${userId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -108,8 +108,13 @@ const Insert = () => {
           },
         });
     
+        // Check if the response is JSON
+        const contentType = response.headers.get('Content-Type');
+        if (!contentType || !contentType.includes('application/json')) {
+          throw new Error('Server did not return JSON. Check if the endpoint exists and the server is running.');
+        }
+    
         if (response.status === 401 || response.status === 403) {
-          // Token is invalid or expired, redirect to login
           localStorage.removeItem('token');
           localStorage.removeItem('user_id');
           localStorage.removeItem('user');
