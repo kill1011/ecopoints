@@ -29,17 +29,16 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
-  const [lastChecked, setLastChecked] = useState(null); // Track the last checked timestamp for recyclables
+  const [lastChecked, setLastChecked] = useState(null);
 
-  const deviceId = "esp32-cam-1"; // Same deviceId as in ESP32 code
-  const userId = localStorage.getItem('user_id'); // Get the logged-in user's ID
+  const deviceId = "esp32-cam-1";
+  const userId = localStorage.getItem('user_id');
 
   const startSensing = async () => {
     if (isSensing) return;
     setIsSensing(true);
     setSystemStatus('Scanning...');
 
-    // Send "start" command to Supabase device_controls table
     try {
       const { error } = await supabase
         .from('device_controls')
@@ -65,7 +64,6 @@ const Insert = () => {
       return;
     }
 
-    // Start the 30-second timer
     let timeLeft = 30;
     const interval = setInterval(() => {
       if (!isSensing) {
@@ -83,7 +81,6 @@ const Insert = () => {
     setSystemStatus('Idle');
     setTimer('');
 
-    // Send "stop" command to Supabase device_controls table
     try {
       const { error } = await supabase
         .from('device_controls')
@@ -123,7 +120,7 @@ const Insert = () => {
       });
 
       const contentType = response.headers.get('Content-Type');
-      if (!contentType || !contentType.includes('application/json')) {
+      if (!contentType || !contentType.toLowerCase().includes('application/json')) {
         throw new Error('Server did not return JSON for insert-recyclables');
       }
 
@@ -151,10 +148,9 @@ const Insert = () => {
     setMaterial('Unknown');
     setPointsEarned(0);
     setMoneyEarned(0);
-    setLastChecked(null); // Reset last checked timestamp
+    setLastChecked(null);
   };
 
-  // Poll the recyclables table for new detections for the logged-in user
   const pollRecyclables = async () => {
     if (!userId) {
       console.error('No user_id found in localStorage');
@@ -167,11 +163,10 @@ const Insert = () => {
         .from('recyclables')
         .select('material, quantity, created_at')
         .eq('device_id', deviceId)
-        .eq('user_id', userId) // Filter by the logged-in user's ID
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(10);
 
-      // If lastChecked is set, only fetch records after that timestamp
       if (lastChecked) {
         query = query.gt('created_at', lastChecked);
       }
@@ -185,18 +180,16 @@ const Insert = () => {
       }
 
       if (data && data.length > 0) {
-        // Update the last checked timestamp to the latest record
         const latestTimestamp = data[0].created_at;
         setLastChecked(latestTimestamp);
 
-        // Process the new detections
         let newBottleCount = bottleCount;
         let newCanCount = canCount;
         let totalQuantity = quantity;
 
         data.forEach((item) => {
           const material = item.material;
-          const qty = item.quantity || 1; // Default to 1 if quantity is not specified
+          const qty = item.quantity || 1;
           totalQuantity += qty;
 
           if (material === 'Plastic Bottle') {
@@ -211,7 +204,6 @@ const Insert = () => {
           setCanCount(newCanCount);
         });
 
-        // Update earnings based on new counts
         updateEarnings();
       }
     } catch (error) {
@@ -225,7 +217,12 @@ const Insert = () => {
     const token = localStorage.getItem('token');
     const userId = localStorage.getItem('user_id');
 
+    // Log token for debugging
+    console.log('Token from localStorage:', token);
+    console.log('User ID from localStorage:', userId);
+
     if (!userId || !token) {
+      console.warn('Missing userId or token, redirecting to login');
       window.location.href = '/login';
       return;
     }
@@ -240,12 +237,9 @@ const Insert = () => {
           },
         });
 
-        const contentType = response.headers.get('Content-Type');
-        if (!contentType || !contentType.includes('application/json')) {
-          throw new Error('Server did not return JSON. Check if the endpoint exists and the server is running.');
-        }
-
+        // Check for authentication errors first
         if (response.status === 401 || response.status === 403) {
+          console.warn('Unauthorized or Forbidden response, redirecting to login');
           localStorage.removeItem('token');
           localStorage.removeItem('user_id');
           localStorage.removeItem('user');
@@ -253,11 +247,22 @@ const Insert = () => {
           return;
         }
 
+        // Log the response for debugging
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
+
+        const contentType = response.headers.get('Content-Type');
+        if (!contentType || !contentType.toLowerCase().includes('application/json')) {
+          console.error('Unexpected Content-Type:', contentType);
+          throw new Error('Server did not return JSON. Check if the endpoint exists and the server is running.');
+        }
+
         if (!response.ok) {
-          throw new Error('Failed to fetch user data');
+          throw new Error(`Failed to fetch user data: ${response.statusText}`);
         }
 
         const data = await response.json();
+        console.log('User data fetched:', data);
         setUserData(data);
       } catch (error) {
         console.error('Error fetching user data:', error);
@@ -270,12 +275,11 @@ const Insert = () => {
 
     fetchUserData();
 
-    // Start polling for recyclables when the component mounts
     const pollInterval = setInterval(() => {
       if (isSensing) {
         pollRecyclables();
       }
-    }, 2000); // Poll every 2 seconds (matches ESP32 poll interval)
+    }, 2000);
 
     return () => {
       clearInterval(pollInterval);

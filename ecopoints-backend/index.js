@@ -9,9 +9,15 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Middleware to ensure Content-Type is always application/json
+app.use((req, res, next) => {
+  res.setHeader('Content-Type', 'application/json');
+  next();
+});
+
 // CORS configuration
 app.use(cors({
-  origin: ['https://ecopoints-teal.vercel.app', 'http://localhost:5433'],
+  origin: ['https://ecopoints-teal.vercel.app', 'http://localhost:5433', 'http://localhost:3000'], // Added localhost:3000 for local development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
@@ -151,16 +157,22 @@ app.get('/api/user-stats/:userId', async (req, res) => {
 
   try {
     const token = req.headers.authorization?.split(' ')[1];
+    console.log('Received request for user stats:', userId);
+    console.log('Token received:', token);
+
     if (!token) {
+      console.warn('No token provided for user stats request');
       return res.status(401).json({ message: 'No token provided' });
     }
 
     jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
       if (err) {
+        console.warn('Invalid token for user stats request:', err.message);
         return res.status(401).json({ message: 'Invalid token' });
       }
 
       if (decoded.id !== userId) {
+        console.warn('Unauthorized access attempt for user stats:', userId);
         return res.status(403).json({ message: 'Unauthorized access' });
       }
 
@@ -171,13 +183,16 @@ app.get('/api/user-stats/:userId', async (req, res) => {
         .single();
 
       if (error) {
+        console.error('Error fetching user stats:', error.message);
         return res.status(500).json({ message: 'Error fetching user stats', error: error.message });
       }
 
       if (!userData) {
+        console.warn('User not found for user stats:', userId);
         return res.status(404).json({ message: 'User not found' });
       }
 
+      console.log('User stats fetched successfully:', userData);
       res.json(userData);
     });
   } catch (error) {
@@ -191,6 +206,7 @@ app.listen(port, () => {
 });
 
 app.use((req, res) => {
+  console.warn('Route not found:', req.originalUrl);
   res.status(404).json({ message: 'Route not found' });
 });
 
