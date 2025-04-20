@@ -5,22 +5,22 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
 import '../styles/Insert.css';
 
-// Supabase configuration (same as ESP32)
-const supabaseUrl = "https://welxjeybnoeeusehuoat.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlbHhqZXlibm9lZXVzZWh1b2F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMTgzNzIsImV4cCI6MjA1OTY5NDM3Mn0.TmkmlnAA1ZmGgwgiFLsKW_zB7APzjFvuo3H9_Om_GCs";
+// Supabase configuration
+const supabaseUrl = "https://xvxlddakxhircvunyhbt.supabase.co";
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2eGxkZGFreGhpcmN2dW55aGJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwMjE2MTIsImV4cCI6MjA2MDU5NzYxMn0.daBvBBLDOngBEgjnz8ijnIWYFEqCh612xG_r_Waxfeo";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const Insert = () => {
-  const wsRef = useRef(null);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  
+  const userId = localStorage.getItem('user_id');
+  const deviceId = 'esp32-cam-1';
+
   const [userData, setUserData] = useState({ 
     name: user.name || 'Guest', 
     points: 0
   });
-
   const [alert, setAlert] = useState({ type: '', message: '' });
-  const [systemStatus, setSystemStatus] = useState('-');
+  const [systemStatus, setSystemStatus] = useState('Idle');
   const [material, setMaterial] = useState('Unknown');
   const [quantity, setQuantity] = useState(0);
   const [bottleCount, setBottleCount] = useState(0);
@@ -29,36 +29,34 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
-  const [lastChecked, setLastChecked] = useState(null);
-
-  const deviceId = "esp32-cam-1";
-  const userId = localStorage.getItem('user_id');
 
   const startSensing = async () => {
     if (isSensing) return;
     setIsSensing(true);
     setSystemStatus('Scanning...');
 
+    console.log('Attempting to send start command:', { deviceId, userId });
+
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('device_controls')
         .insert({
           device_id: deviceId,
           command: 'start',
           user_id: userId || null,
-          created_at: new Date().toISOString(),
         });
 
       if (error) {
         console.error('Error sending start command:', error);
-        setAlert({ type: 'error', message: 'Failed to start sensing.' });
+        setAlert({ type: 'error', message: `Failed to start sensing: ${error.message}` });
         setIsSensing(false);
         setSystemStatus('Idle');
         return;
       }
+      console.log('Start command sent successfully, inserted data:', data);
     } catch (error) {
-      console.error('Error sending start command:', error);
-      setAlert({ type: 'error', message: 'Failed to start sensing.' });
+      console.error('Unexpected error sending start command:', error);
+      setAlert({ type: 'error', message: 'Unexpected error starting sensing.' });
       setIsSensing(false);
       setSystemStatus('Idle');
       return;
@@ -81,23 +79,26 @@ const Insert = () => {
     setSystemStatus('Idle');
     setTimer('');
 
+    console.log('Attempting to send stop command:', { deviceId, userId });
+
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('device_controls')
         .insert({
           device_id: deviceId,
           command: 'stop',
           user_id: userId || null,
-          created_at: new Date().toISOString(),
         });
 
       if (error) {
         console.error('Error sending stop command:', error);
-        setAlert({ type: 'error', message: 'Failed to stop sensing.' });
+        setAlert({ type: 'error', message: `Failed to stop sensing: ${error.message}` });
+      } else {
+        console.log('Stop command sent successfully, inserted data:', data);
       }
     } catch (error) {
-      console.error('Error sending stop command:', error);
-      setAlert({ type: 'error', message: 'Failed to stop sensing.' });
+      console.error('Unexpected error sending stop command:', error);
+      setAlert({ type: 'error', message: 'Unexpected error stopping sensing.' });
     }
   };
 
@@ -128,7 +129,6 @@ const Insert = () => {
       if (result.success) {
         setAlert({ type: 'success', message: 'Recyclables added successfully!' });
         resetSensorData();
-        const userId = localStorage.getItem('user_id');
         const userResponse = await fetch(`${apiUrl}/api/user/${userId}`);
         setUserData(await userResponse.json());
       } else {
@@ -148,79 +148,10 @@ const Insert = () => {
     setMaterial('Unknown');
     setPointsEarned(0);
     setMoneyEarned(0);
-    setLastChecked(null);
-  };
-
-  const pollRecyclables = async () => {
-    if (!userId) {
-      console.error('No user_id found in localStorage');
-      setAlert({ type: 'error', message: 'Please log in to view recyclables data.' });
-      return;
-    }
-
-    try {
-      let query = supabase
-        .from('recyclables')
-        .select('material, quantity, created_at')
-        .eq('device_id', deviceId)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (lastChecked) {
-        query = query.gt('created_at', lastChecked);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('Error polling recyclables:', error);
-        setAlert({ type: 'error', message: 'Failed to fetch recyclables data.' });
-        return;
-      }
-
-      if (data && data.length > 0) {
-        const latestTimestamp = data[0].created_at;
-        setLastChecked(latestTimestamp);
-
-        let newBottleCount = bottleCount;
-        let newCanCount = canCount;
-        let totalQuantity = quantity;
-
-        data.forEach((item) => {
-          const material = item.material;
-          const qty = item.quantity || 1;
-          totalQuantity += qty;
-
-          if (material === 'Plastic Bottle') {
-            newBottleCount += qty;
-          } else if (material === 'Can') {
-            newCanCount += qty;
-          }
-
-          setMaterial(material);
-          setQuantity(totalQuantity);
-          setBottleCount(newBottleCount);
-          setCanCount(newCanCount);
-        });
-
-        updateEarnings();
-      }
-    } catch (error) {
-      console.error('Error polling recyclables:', error);
-      setAlert({ type: 'error', message: 'Failed to fetch recyclables data.' });
-    }
   };
 
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
     const token = localStorage.getItem('token');
-    const userId = localStorage.getItem('user_id');
-
-    // Log token for debugging
-    console.log('Token from localStorage:', token);
-    console.log('User ID from localStorage:', userId);
-
     if (!userId || !token) {
       console.warn('Missing userId or token, redirecting to login');
       window.location.href = '/login';
@@ -237,7 +168,6 @@ const Insert = () => {
           },
         });
 
-        // Check for authentication errors first
         if (response.status === 401 || response.status === 403) {
           console.warn('Unauthorized or Forbidden response, redirecting to login');
           localStorage.removeItem('token');
@@ -247,22 +177,11 @@ const Insert = () => {
           return;
         }
 
-        // Log the response for debugging
-        console.log('Response status:', response.status);
-        console.log('Response headers:', response.headers);
-
-        const contentType = response.headers.get('Content-Type');
-        if (!contentType || !contentType.toLowerCase().includes('application/json')) {
-          console.error('Unexpected Content-Type:', contentType);
-          throw new Error('Server did not return JSON. Check if the endpoint exists and the server is running.');
-        }
-
         if (!response.ok) {
           throw new Error(`Failed to fetch user data: ${response.statusText}`);
         }
 
         const data = await response.json();
-        console.log('User data fetched:', data);
         setUserData(data);
       } catch (error) {
         console.error('Error fetching user data:', error);
@@ -275,17 +194,42 @@ const Insert = () => {
 
     fetchUserData();
 
-    const pollInterval = setInterval(() => {
-      if (isSensing) {
-        pollRecyclables();
-      }
-    }, 2000);
+    // Subscribe to recyclables table for real-time detection data
+    const subscription = supabase
+      .channel('public:recyclables')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'recyclables',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const { material, quantity } = payload.new;
+          let newBottleCount = bottleCount;
+          let newCanCount = canCount;
+          let totalQuantity = quantity;
+
+          if (material === 'Plastic Bottle') {
+            newBottleCount += quantity;
+          } else if (material === 'Can') {
+            newCanCount += quantity;
+          }
+
+          setMaterial(material);
+          setQuantity(totalQuantity);
+          setBottleCount(newBottleCount);
+          setCanCount(newCanCount);
+          updateEarnings();
+        }
+      )
+      .subscribe();
 
     return () => {
-      clearInterval(pollInterval);
-      if (wsRef.current) wsRef.current.close();
+      supabase.removeChannel(subscription);
     };
-  }, [isSensing]);
+  }, [bottleCount, canCount, userId]);
 
   return (
     <Layout title="Insert Recyclables">
