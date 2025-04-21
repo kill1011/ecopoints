@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -15,10 +15,7 @@ const Insert = () => {
   const userId = localStorage.getItem('user_id');
   const deviceId = 'esp32-cam-1';
 
-  const [userData, setUserData] = useState({ 
-    name: user.name || 'Guest', 
-    points: 0
-  });
+  const [userData, setUserData] = useState({ name: user.name || 'Guest', points: 0 });
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [systemStatus, setSystemStatus] = useState('Idle');
   const [material, setMaterial] = useState('Unknown');
@@ -35,8 +32,6 @@ const Insert = () => {
     setIsSensing(true);
     setSystemStatus('Scanning...');
 
-    console.log('Attempting to send start command:', { deviceId, userId });
-
     try {
       const { data, error } = await supabase
         .from('device_controls')
@@ -47,16 +42,12 @@ const Insert = () => {
         });
 
       if (error) {
-        console.error('Error sending start command:', error);
-        setAlert({ type: 'error', message: `Failed to start sensing: ${error.message}` });
-        setIsSensing(false);
-        setSystemStatus('Idle');
-        return;
+        throw new Error(`Failed to start sensing: ${error.message}`);
       }
-      console.log('Start command sent successfully, inserted data:', data);
+      console.log('Start command sent:', data);
     } catch (error) {
-      console.error('Unexpected error sending start command:', error);
-      setAlert({ type: 'error', message: 'Unexpected error starting sensing.' });
+      console.error('Error sending start command:', error);
+      setAlert({ type: 'error', message: error.message });
       setIsSensing(false);
       setSystemStatus('Idle');
       return;
@@ -79,8 +70,6 @@ const Insert = () => {
     setSystemStatus('Idle');
     setTimer('');
 
-    console.log('Attempting to send stop command:', { deviceId, userId });
-
     try {
       const { data, error } = await supabase
         .from('device_controls')
@@ -91,14 +80,12 @@ const Insert = () => {
         });
 
       if (error) {
-        console.error('Error sending stop command:', error);
-        setAlert({ type: 'error', message: `Failed to stop sensing: ${error.message}` });
-      } else {
-        console.log('Stop command sent successfully, inserted data:', data);
+        throw new Error(`Failed to stop sensing: ${error.message}`);
       }
+      console.log('Stop command sent:', data);
     } catch (error) {
-      console.error('Unexpected error sending stop command:', error);
-      setAlert({ type: 'error', message: 'Unexpected error stopping sensing.' });
+      console.error('Error sending stop command:', error);
+      setAlert({ type: 'error', message: error.message });
     }
   };
 
@@ -111,18 +98,17 @@ const Insert = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const payload = { bottle_quantity: bottleCount, can_quantity: canCount };
+    const payload = { bottle_quantity: bottleCount, can_quantity: canCount, user_id: userId };
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5432';
       const response = await fetch(`${apiUrl}/api/insert-recyclables`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      const contentType = response.headers.get('Content-Type');
-      if (!contentType || !contentType.toLowerCase().includes('application/json')) {
-        throw new Error('Server did not return JSON for insert-recyclables');
+      if (!response.ok) {
+        throw new Error('Failed to add recyclables');
       }
 
       const result = await response.json();
@@ -132,10 +118,10 @@ const Insert = () => {
         const userResponse = await fetch(`${apiUrl}/api/user/${userId}`);
         setUserData(await userResponse.json());
       } else {
-        setAlert({ type: 'error', message: result.message || 'Failed to add recyclables.' });
+        throw new Error(result.message || 'Failed to add recyclables');
       }
     } catch (error) {
-      setAlert({ type: 'error', message: 'An error occurred.' });
+      setAlert({ type: 'error', message: error.message });
       console.error(error);
     }
     stopSensing();
@@ -153,7 +139,6 @@ const Insert = () => {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!userId || !token) {
-      console.warn('Missing userId or token, redirecting to login');
       window.location.href = '/login';
       return;
     }
@@ -169,7 +154,6 @@ const Insert = () => {
         });
 
         if (response.status === 401 || response.status === 403) {
-          console.warn('Unauthorized or Forbidden response, redirecting to login');
           localStorage.removeItem('token');
           localStorage.removeItem('user_id');
           localStorage.removeItem('user');
@@ -185,16 +169,13 @@ const Insert = () => {
         setUserData(data);
       } catch (error) {
         console.error('Error fetching user data:', error);
-        setAlert({
-          type: 'error',
-          message: 'Failed to load user data. Please try logging in again.',
-        });
+        setAlert({ type: 'error', message: 'Failed to load user data.' });
       }
     };
 
     fetchUserData();
 
-    // Subscribe to recyclables table for real-time detection data
+    // Subscribe to recyclables table for real-time updates
     const subscription = supabase
       .channel('public:recyclables')
       .on(
@@ -203,24 +184,22 @@ const Insert = () => {
           event: 'INSERT',
           schema: 'public',
           table: 'recyclables',
-          filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          const { material, quantity } = payload.new;
-          let newBottleCount = bottleCount;
-          let newCanCount = canCount;
-          let totalQuantity = quantity;
-
-          if (material === 'Plastic Bottle') {
-            newBottleCount += quantity;
-          } else if (material === 'Can') {
-            newCanCount += quantity;
+          const { material, quantity, user_id } = payload.new;
+          console.log('New recyclable detected:', payload.new);
+          if (user_id !== userId) {
+            console.log('Skipping entry: user_id does not match');
+            return;
           }
-
           setMaterial(material);
-          setQuantity(totalQuantity);
-          setBottleCount(newBottleCount);
-          setCanCount(newCanCount);
+          setQuantity(quantity);
+          console.log('Updated state - Material:', material, 'Quantity:', quantity);
+          if (material === 'PLASTIC_BOTTLE') {
+            setBottleCount(prev => prev + quantity);
+          } else if (material === 'CAN') {
+            setCanCount(prev => prev + quantity);
+          }
           updateEarnings();
         }
       )
@@ -229,7 +208,7 @@ const Insert = () => {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [bottleCount, canCount, userId]);
+  }, [userId]);
 
   return (
     <Layout title="Insert Recyclables">
