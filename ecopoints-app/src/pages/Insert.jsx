@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faPlay, faStop } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faPlay, faStop, faSync } from '@fortawesome/free-solid-svg-icons';
 import '../styles/Insert.css';
 
 // Supabase configuration
@@ -136,6 +136,48 @@ const Insert = () => {
     setMoneyEarned(0);
   };
 
+  const fetchRecentRecyclables = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('recyclables')
+        .select('*')
+        .eq('device_id', deviceId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        throw new Error(`Failed to fetch recyclables: ${error.message}`);
+      }
+
+      if (data && data.length > 0) {
+        const { material, quantity, user_id } = data[0];
+        console.log('Fetched recyclable:', data[0]);
+        console.log('Current userId:', userId, 'Record user_id:', user_id);
+        setMaterial(material);
+        setQuantity(quantity);
+        if (material === 'PLASTIC_BOTTLE') {
+          setBottleCount(prev => {
+            const newCount = prev + quantity;
+            console.log('Updated Bottle Count (fetch):', newCount);
+            return newCount;
+          });
+        } else if (material === 'CAN') {
+          setCanCount(prev => {
+            const newCount = prev + quantity;
+            console.log('Updated Can Count (fetch):', newCount);
+            return newCount;
+          });
+        }
+        updateEarnings();
+      } else {
+        console.log('No recent recyclables found.');
+      }
+    } catch (error) {
+      console.error('Error fetching recyclables:', error);
+      setAlert({ type: 'error', message: error.message });
+    }
+  };
+
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!userId || !token) {
@@ -184,28 +226,30 @@ const Insert = () => {
           event: 'INSERT',
           schema: 'public',
           table: 'recyclables',
+          filter: `device_id=eq.${deviceId}`,
         },
         (payload) => {
           const { material, quantity, user_id } = payload.new;
           console.log('New recyclable detected:', payload.new);
           console.log('Current userId:', userId, 'Record user_id:', user_id);
-          if (user_id !== userId) {
-            console.log('Skipping entry: user_id does not match');
-            return;
-          }
+          // Temporarily remove user_id check for debugging
+          // if (user_id !== userId) {
+          //   console.log('Skipping entry: user_id does not match');
+          //   return;
+          // }
           setMaterial(material);
           setQuantity(quantity);
           console.log('Updated state - Material:', material, 'Quantity:', quantity, 'Bottle Count:', bottleCount, 'Can Count:', canCount);
           if (material === 'PLASTIC_BOTTLE') {
             setBottleCount(prev => {
               const newCount = prev + quantity;
-              console.log('Updated Bottle Count:', newCount);
+              console.log('Updated Bottle Count (subscription):', newCount);
               return newCount;
             });
           } else if (material === 'CAN') {
             setCanCount(prev => {
               const newCount = prev + quantity;
-              console.log('Updated Can Count:', newCount);
+              console.log('Updated Can Count (subscription):', newCount);
               return newCount;
             });
           }
@@ -214,6 +258,11 @@ const Insert = () => {
       )
       .subscribe((status) => {
         console.log('Subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to real-time updates for recyclables table.');
+        } else if (status === 'CLOSED') {
+          console.log('Subscription closed. Check network or Supabase configuration.');
+        }
       });
 
     return () => {
@@ -258,6 +307,13 @@ const Insert = () => {
                 style={{ display: isSensing ? 'block' : 'none' }}
               >
                 <FontAwesomeIcon icon={faStop} /> Cancel
+              </button>
+              <button
+                type="button"
+                className="control-btn refresh-btn"
+                onClick={fetchRecentRecyclables}
+              >
+                <FontAwesomeIcon icon={faSync} /> Refresh
               </button>
             </div>
             <button type="submit" className="control-btn submit-btn" disabled={!isSensing}>
