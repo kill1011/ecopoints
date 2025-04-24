@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -7,15 +7,28 @@ import '../styles/Insert.css';
 
 // Supabase configuration
 const supabaseUrl = "https://xvxlddakxhircvunyhbt.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2eGxkZGFreGhpcmN2dW55aGJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NTAyMTYxMiwiZXhwIjoyMDYwNTk3NjEyfQ.tuAoIiYESiXPyCGaO5pDrA7vw7VeVfpuxiCXT0bt8Ck";
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2eGxkZGFreGhpcmN2dW55aGJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwMjE2MTIsImV4cCI6MjA2MDU5NzYxMn0.daBvBBLDOngBEgjnz8ijnIWYFEqCh612xG_r_Waxfeo";
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  realtime: {
+    params: {
+      eventsPerSecond: 10, // Adjust if hitting rate limits
+    },
+  }
+});
 
 const Insert = () => {
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const userId = localStorage.getItem('user_id');
+  const [user, setUser] = useState(null);
+  const userId = user?.id || '2a4702d4-90e7-4cc0-be97-b63b9da69dc9';
   const deviceId = 'esp32-cam-1';
 
-  const [userData, setUserData] = useState({ name: user.name || 'Guest', points: 0 });
+  const initialStats = JSON.parse(localStorage.getItem('userStats')) || {
+    totalBottleCount: 0,
+    totalCanCount: 0,
+    totalPoints: 0,
+    totalMoney: 0,
+  };
+
+  const [userData, setUserData] = useState({ name: 'Guest', points: 0 });
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [systemStatus, setSystemStatus] = useState('Idle');
   const [material, setMaterial] = useState('Unknown');
@@ -26,9 +39,41 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
+  const [totalBottleCount, setTotalBottleCount] = useState(initialStats.totalBottleCount);
+  const [totalCanCount, setTotalCanCount] = useState(initialStats.totalCanCount);
+  const [totalPoints, setTotalPoints] = useState(initialStats.totalPoints);
+  const [totalMoney, setTotalMoney] = useState(initialStats.totalMoney);
+  const [recentDetections, setRecentDetections] = useState([]);
+  const subscriptionRef = useRef(null);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      console.log('Authenticated user:', user, 'Auth error:', error);
+      setUser(user);
+      if (error || !user) {
+        setAlert({ type: 'error', message: 'User not authenticated. Redirecting to login...' });
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 2000);
+      } else {
+        setUserData({ name: user.user_metadata?.name || 'Guest', points: 0 });
+      }
+    };
+    checkAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event, session);
+      setUser(session?.user || null);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const startSensing = async () => {
-    if (isSensing) return;
+    if (isSensing || !user) return;
     setIsSensing(true);
     setSystemStatus('Scanning...');
 
@@ -38,7 +83,7 @@ const Insert = () => {
         .insert({
           device_id: deviceId,
           command: 'start',
-          user_id: userId || null,
+          user_id: userId,
         });
 
       if (error) {
@@ -76,7 +121,7 @@ const Insert = () => {
         .insert({
           device_id: deviceId,
           command: 'stop',
-          user_id: userId || null,
+          user_id: userId,
         });
 
       if (error) {
@@ -89,41 +134,39 @@ const Insert = () => {
     }
   };
 
-  const updateEarnings = () => {
+  const updateEarnings = (bottleCount, canCount) => {
     const points = bottleCount * 2 + canCount * 3;
     const money = (bottleCount * 0.5 + canCount * 0.75).toFixed(2);
+    console.log('Updating earnings - Bottle Count:', bottleCount, 'Can Count:', canCount, 'Points:', points, 'Money:', money);
     setPointsEarned(points);
     setMoneyEarned(money);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const payload = { bottle_quantity: bottleCount, can_quantity: canCount, user_id: userId };
-    try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5433';
-      const response = await fetch(`${apiUrl}/api/insert-recyclables`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    console.log('Submitting - Bottle Count:', bottleCount, 'Can Count:', canCount, 'Points Earned:', pointsEarned, 'Money Earned:', moneyEarned);
 
-      if (!response.ok) {
-        throw new Error('Failed to add recyclables');
-      }
+    setTotalBottleCount(prev => prev + bottleCount);
+    setTotalCanCount(prev => prev + canCount);
+    setTotalPoints(prev => prev + pointsEarned);
+    setTotalMoney(prev => (parseFloat(prev) + parseFloat(moneyEarned)).toFixed(2));
 
-      const result = await response.json();
-      if (result.success) {
-        setAlert({ type: 'success', message: 'Recyclables added successfully!' });
-        resetSensorData();
-        const userResponse = await fetch(`${apiUrl}/api/user/${userId}`);
-        setUserData(await userResponse.json());
-      } else {
-        throw new Error(result.message || 'Failed to add recyclables');
-      }
-    } catch (error) {
-      setAlert({ type: 'error', message: error.message });
-      console.error(error);
-    }
+    setUserData(prev => ({
+      ...prev,
+      points: prev.points + pointsEarned,
+    }));
+
+    const updatedStats = {
+      totalBottleCount: totalBottleCount + bottleCount,
+      totalCanCount: totalCanCount + canCount,
+      totalPoints: totalPoints + pointsEarned,
+      totalMoney: (parseFloat(totalMoney) + parseFloat(moneyEarned)).toFixed(2),
+    };
+    console.log('Saving to localStorage:', updatedStats);
+    localStorage.setItem('userStats', JSON.stringify(updatedStats));
+
+    setAlert({ type: 'success', message: 'Recyclables added successfully!' });
+    resetSensorData();
     stopSensing();
   };
 
@@ -134,43 +177,51 @@ const Insert = () => {
     setMaterial('Unknown');
     setPointsEarned(0);
     setMoneyEarned(0);
+    setRecentDetections([]);
   };
 
   const fetchRecentRecyclables = async () => {
     try {
+      const timeThreshold = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       const { data, error } = await supabase
         .from('recyclables')
         .select('*')
         .eq('device_id', deviceId)
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .gte('created_at', timeThreshold)
+        .order('created_at', { ascending: false });
+
+      console.log('FetchRecentRecyclables - User:', user, 'Data:', data, 'Error:', error);
 
       if (error) {
         throw new Error(`Failed to fetch recyclables: ${error.message}`);
       }
 
       if (data && data.length > 0) {
-        const { material, quantity, user_id } = data[0];
-        console.log('Fetched recyclable:', data[0]);
-        console.log('Current userId:', userId, 'Record user_id:', user_id);
-        setMaterial(material);
-        setQuantity(quantity);
-        if (material === 'PLASTIC_BOTTLE') {
-          setBottleCount(prev => {
-            const newCount = prev + quantity;
-            console.log('Updated Bottle Count (fetch):', newCount);
-            return newCount;
-          });
-        } else if (material === 'CAN') {
-          setCanCount(prev => {
-            const newCount = prev + quantity;
-            console.log('Updated Can Count (fetch):', newCount);
-            return newCount;
-          });
-        }
-        updateEarnings();
+        console.log('Fetched recyclables:', data);
+        setRecentDetections(data);
+
+        let newBottleCount = 0;
+        let newCanCount = 0;
+        data.forEach(record => {
+          console.log('Processing record:', record);
+          if (record.material === 'PLASTIC_BOTTLE') {
+            newBottleCount += record.quantity;
+          } else if (record.material === 'CAN') {
+            newCanCount += record.quantity;
+          }
+          setMaterial(record.material);
+          setQuantity(record.quantity);
+        });
+
+        console.log('Aggregated - Bottle Count:', newBottleCount, 'Can Count:', newCanCount);
+        setBottleCount(newBottleCount);
+        setCanCount(newCanCount);
+        updateEarnings(newBottleCount, newCanCount);
       } else {
-        console.log('No recent recyclables found.');
+        console.log('No recent recyclables found for device_id:', deviceId);
+        setAlert({ type: 'info', message: 'No recent recyclables found.' });
+        setMaterial('Unknown');
+        setQuantity(0);
       }
     } catch (error) {
       console.error('Error fetching recyclables:', error);
@@ -179,97 +230,112 @@ const Insert = () => {
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!userId || !token) {
-      window.location.href = '/login';
-      return;
-    }
+    if (!user) return;
 
-    const fetchUserData = async () => {
-      try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-        const response = await fetch(`${apiUrl}/api/user-stats/${userId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+    console.log('useEffect - userId:', userId, 'deviceId:', deviceId);
 
-        if (response.status === 401 || response.status === 403) {
-          localStorage.removeItem('token');
-          localStorage.removeItem('user_id');
-          localStorage.removeItem('user');
-          window.location.href = '/login';
-          return;
-        }
+    fetchRecentRecyclables();
 
-        if (!response.ok) {
-          throw new Error(`Failed to fetch user data: ${response.statusText}`);
-        }
+    let retryCount = 0;
+    const maxRetries = 5;
+    const baseRetryDelay = 5000;
 
-        const data = await response.json();
-        setUserData(data);
-      } catch (error) {
-        console.error('Error fetching user data:', error);
-        setAlert({ type: 'error', message: 'Failed to load user data.' });
+    const subscribe = () => {
+      console.log('Attempting to subscribe to real-time updates...');
+      if (subscriptionRef.current) {
+        supabase.removeChannel(subscriptionRef.current);
       }
+
+      subscriptionRef.current = supabase
+        .channel(`public:recyclables:device_id=eq.${deviceId}`, {
+          config: {
+            broadcast: { ack: true },
+            presence: { key: userId },
+          },
+        })
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'recyclables',
+            filter: `device_id=eq.${deviceId}`,
+          },
+          (payload) => {
+            console.log('Real-time event received:', payload);
+            const { material, quantity, user_id, created_at } = payload.new;
+            console.log('New recyclable:', { material, quantity, user_id, created_at });
+
+            setRecentDetections(prev => [
+              { material, quantity, user_id, created_at },
+              ...prev.slice(0, 4),
+            ]);
+
+            setMaterial(material);
+            setQuantity(quantity);
+            if (material === 'PLASTIC_BOTTLE') {
+              setBottleCount(prev => {
+                const newCount = prev + quantity;
+                console.log('Real-time - Updated Bottle Count:', newCount);
+                updateEarnings(newCount, canCount);
+                return newCount;
+              });
+            } else if (material === 'CAN') {
+              setCanCount(prev => {
+                const newCount = prev + quantity;
+                console.log('Real-time - Updated Can Count:', newCount);
+                updateEarnings(bottleCount, newCount);
+                return newCount;
+              });
+            }
+          }
+        )
+        .subscribe((status, err) => {
+          console.log('Subscription status:', status, 'Error:', err ? err.message : 'No error details');
+          if (status === 'SUBSCRIBED') {
+            console.log('Successfully subscribed to real-time updates for recyclables.');
+            setAlert({ type: 'success', message: 'Real-time subscription active.' });
+            retryCount = 0;
+          } else if (status === 'CLOSED') {
+            console.error('Subscription closed:', err ? err.message : 'No error details');
+            setAlert({ type: 'error', message: 'Real-time subscription failed. Use Refresh.' });
+            if (retryCount < maxRetries) {
+              const delay = baseRetryDelay * Math.pow(2, retryCount);
+              console.log(`Retrying subscription (${retryCount + 1}/${maxRetries}) in ${delay}ms...`);
+              setTimeout(subscribe, delay);
+              retryCount++;
+            } else {
+              console.error('Max retry attempts reached. Subscription failed.');
+              setAlert({ type: 'error', message: 'Real-time subscription failed permanently. Use Refresh.' });
+            }
+          } else if (status === 'TIMED_OUT') {
+            console.error('Subscription timed out:', err ? err.message : 'No error details');
+            setAlert({ type: 'error', message: 'Real-time subscription timed out. Retrying...' });
+            if (retryCount < maxRetries) {
+              const delay = baseRetryDelay * Math.pow(2, retryCount);
+              console.log(`Retrying subscription (${retryCount + 1}/${maxRetries}) in ${delay}ms...`);
+              setTimeout(subscribe, delay);
+              retryCount++;
+            }
+          } else {
+            console.log('Subscription status changed:', status);
+          }
+        });
     };
 
-    fetchUserData();
+    subscribe();
 
-    // Subscribe to recyclables table for real-time updates
-    const subscription = supabase
-      .channel('public:recyclables')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'recyclables',
-          filter: `device_id=eq.${deviceId}`,
-        },
-        (payload) => {
-          const { material, quantity, user_id } = payload.new;
-          console.log('New recyclable detected:', payload.new);
-          console.log('Current userId:', userId, 'Record user_id:', user_id);
-          // Temporarily remove user_id check for debugging
-          // if (user_id !== userId) {
-          //   console.log('Skipping entry: user_id does not match');
-          //   return;
-          // }
-          setMaterial(material);
-          setQuantity(quantity);
-          console.log('Updated state - Material:', material, 'Quantity:', quantity, 'Bottle Count:', bottleCount, 'Can Count:', canCount);
-          if (material === 'PLASTIC_BOTTLE') {
-            setBottleCount(prev => {
-              const newCount = prev + quantity;
-              console.log('Updated Bottle Count (subscription):', newCount);
-              return newCount;
-            });
-          } else if (material === 'CAN') {
-            setCanCount(prev => {
-              const newCount = prev + quantity;
-              console.log('Updated Can Count (subscription):', newCount);
-              return newCount;
-            });
-          }
-          updateEarnings();
-        }
-      )
-      .subscribe((status) => {
-        console.log('Subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to real-time updates for recyclables table.');
-        } else if (status === 'CLOSED') {
-          console.log('Subscription closed. Check network or Supabase configuration.');
-        }
-      });
+    const interval = setInterval(fetchRecentRecyclables, 5000);
 
     return () => {
       console.log('Unsubscribing from real-time updates');
-      supabase.removeChannel(subscription);
+      clearInterval(interval);
+      if (subscriptionRef.current) {
+        supabase.removeChannel(subscriptionRef.current);
+        subscriptionRef.current = null;
+      }
     };
-  }, [userId]);
+  }, [user, userId, bottleCount, canCount]);
 
   return (
     <Layout title="Insert Recyclables">
@@ -277,8 +343,8 @@ const Insert = () => {
         <div className="status-card">
           <div className="stat-label"><FontAwesomeIcon icon={faRecycle} /> Sensor Status</div>
           <div className="stat-value" style={{ color: isSensing ? '#4caf50' : '#666' }}>{systemStatus}</div>
-          <div className="stat-label">Material: {material}</div>
-          <div className="stat-value">{quantity}</div>
+          <div className="stat-label">Latest Material: {material}</div>
+          <div className="stat-value">Quantity: {quantity}</div>
           <div className="stat-label">Items Detected</div>
           <div className="stat-label">Plastic Bottles: {bottleCount}</div>
           <div className="stat-label">Cans: {canCount}</div>
@@ -296,7 +362,7 @@ const Insert = () => {
                 type="button"
                 className="control-btn start-btn"
                 onClick={startSensing}
-                disabled={isSensing}
+                disabled={isSensing || !user}
               >
                 <FontAwesomeIcon icon={faPlay} /> Start Sensing
               </button>
@@ -329,6 +395,29 @@ const Insert = () => {
           <div className="stat-label">Points</div>
           <div className="stat-value">₱{moneyEarned}</div>
           <div className="stat-label">Money</div>
+        </div>
+
+        <div className="stats-card">
+          <div className="stat-label">Total Statistics</div>
+          <div className="stat-label">Total Plastic Bottles: {totalBottleCount}</div>
+          <div className="stat-label">Total Cans: {totalCanCount}</div>
+          <div className="stat-label">Total Points: {totalPoints}</div>
+          <div className="stat-label">Total Money: ₱{totalMoney}</div>
+        </div>
+
+        <div className="history-card">
+          <div className="stat-label">Recent Detections</div>
+          {recentDetections.length > 0 ? (
+            <ul>
+              {recentDetections.map((detection, index) => (
+                <li key={index}>
+                  {detection.material} (Qty: {detection.quantity}) at {new Date(detection.created_at).toLocaleTimeString()}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No recent detections.</p>
+          )}
         </div>
       </div>
     </Layout>
