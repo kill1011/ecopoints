@@ -7,7 +7,7 @@ import '../styles/Insert.css';
 
 // Supabase configuration
 const supabaseUrl = "https://xvxlddakxhircvunyhbt.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2eGxkZGFreGhpcmN2dW55aGJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwMjE2MTIsImV4cCI6MjA2MDU5NzYxMn0.daBvBBLDOngBEgjnz8ijnIWYFEqCh612xG_r_Waxfeo";
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2eGxkZGFreGhpcmN2dW55aGJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NTAyMTYxMiwiZXhwIjoyMDYwNTk3NjEyfQ.tuAoIiYESiXPyCGaO5pDrA7vw7VeVfpuxiCXT0bt8Ck";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const Insert = () => {
@@ -188,24 +188,36 @@ const Insert = () => {
         (payload) => {
           const { material, quantity, user_id } = payload.new;
           console.log('New recyclable detected:', payload.new);
+          console.log('Current userId:', userId, 'Record user_id:', user_id);
           if (user_id !== userId) {
             console.log('Skipping entry: user_id does not match');
             return;
           }
           setMaterial(material);
           setQuantity(quantity);
-          console.log('Updated state - Material:', material, 'Quantity:', quantity);
+          console.log('Updated state - Material:', material, 'Quantity:', quantity, 'Bottle Count:', bottleCount, 'Can Count:', canCount);
           if (material === 'PLASTIC_BOTTLE') {
-            setBottleCount(prev => prev + quantity);
+            setBottleCount(prev => {
+              const newCount = prev + quantity;
+              console.log('Updated Bottle Count:', newCount);
+              return newCount;
+            });
           } else if (material === 'CAN') {
-            setCanCount(prev => prev + quantity);
+            setCanCount(prev => {
+              const newCount = prev + quantity;
+              console.log('Updated Can Count:', newCount);
+              return newCount;
+            });
           }
           updateEarnings();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Subscription status:', status);
+      });
 
     return () => {
+      console.log('Unsubscribing from real-time updates');
       supabase.removeChannel(subscription);
     };
   }, [userId]);
@@ -219,6 +231,13 @@ const Insert = () => {
           <div className="stat-label">Material: {material}</div>
           <div className="stat-value">{quantity}</div>
           <div className="stat-label">Items Detected</div>
+          <div className="stat-label">Plastic Bottles: {bottleCount}</div>
+          <div className="stat-label">Cans: {canCount}</div>
+          {alert.message && (
+            <div className={`alert ${alert.type}`}>
+              {alert.message}
+            </div>
+          )}
         </div>
 
         <div className="control-card">
