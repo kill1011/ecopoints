@@ -15,15 +15,25 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS configuration
-app.use(cors({
-  origin: ['https://ecopoints-teal.vercel.app', 'http://localhost:5433', 'http://localhost:3000'], // Added localhost:3000 for local development
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-}));
-
-app.options('*', cors());
+// Custom CORS middleware
+app.use((req, res, next) => {
+  const allowedOrigins = ['https://ecopoints-teal.vercel.app', 'http://localhost:5433', 'http://localhost:3000'];
+  const origin = req.headers.origin;
+  console.log('Request Origin:', origin); // Debug log
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    console.warn('Origin not allowed:', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    console.log('Handling OPTIONS request');
+    return res.status(200).json({});
+  }
+  next();
+});
 
 app.use(express.json());
 

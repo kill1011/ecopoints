@@ -100,7 +100,7 @@ const Insert = () => {
     e.preventDefault();
     const payload = { bottle_quantity: bottleCount, can_quantity: canCount, user_id: userId };
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5432';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5433';
       const response = await fetch(`${apiUrl}/api/insert-recyclables`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
