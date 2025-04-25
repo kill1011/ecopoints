@@ -9,25 +9,20 @@ import '../styles/Insert.css';
 const supabaseUrl = "https://xvxlddakxhircvunyhbt.supabase.co";
 const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2eGxkZGFreGhpcmN2dW55aGJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwMjE2MTIsImV4cCI6MjA2MDU5NzYxMn0.daBvBBLDOngBEgjnz8ijnIWYFEqCh612xG_r_Waxfeo";
 const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
   realtime: {
     params: {
-      eventsPerSecond: 10, // Adjust if hitting rate limits
+      eventsPerSecond: 10,
     },
-  }
+  },
 });
 
 const Insert = () => {
   const [user, setUser] = useState(null);
-  const userId = user?.id || '2a4702d4-90e7-4cc0-be97-b63b9da69dc9';
-  const deviceId = 'esp32-cam-1';
-
-  const initialStats = JSON.parse(localStorage.getItem('userStats')) || {
-    totalBottleCount: 0,
-    totalCanCount: 0,
-    totalPoints: 0,
-    totalMoney: 0,
-  };
-
   const [userData, setUserData] = useState({ name: 'Guest', points: 0 });
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [systemStatus, setSystemStatus] = useState('Idle');
@@ -39,32 +34,62 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
+  const initialStats = JSON.parse(localStorage.getItem('userStats')) || {
+    totalBottleCount: 0,
+    totalCanCount: 0,
+    totalPoints: 0,
+    totalMoney: 0,
+  };
   const [totalBottleCount, setTotalBottleCount] = useState(initialStats.totalBottleCount);
   const [totalCanCount, setTotalCanCount] = useState(initialStats.totalCanCount);
   const [totalPoints, setTotalPoints] = useState(initialStats.totalPoints);
   const [totalMoney, setTotalMoney] = useState(initialStats.totalMoney);
   const [recentDetections, setRecentDetections] = useState([]);
   const subscriptionRef = useRef(null);
+  const deviceId = 'esp32-cam-1';
 
+  // Check authentication and refresh session
   useEffect(() => {
     const checkAuth = async () => {
-      const { data: { user }, error } = await supabase.auth.getUser();
-      console.log('Authenticated user:', user, 'Auth error:', error);
-      setUser(user);
-      if (error || !user) {
+      console.log('Checking authentication...');
+      // Refresh session to ensure valid JWT
+      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+      console.log('Session refresh:', refreshData, 'Refresh Error:', refreshError);
+      
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      console.log('Session:', session, 'Session Error:', sessionError);
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      console.log('Authenticated user:', user, 'User Error:', userError);
+      
+      if (refreshError || sessionError || !session || !session.user || userError || !user) {
+        console.error('Authentication failed. Redirecting to login.');
         setAlert({ type: 'error', message: 'User not authenticated. Redirecting to login...' });
         setTimeout(() => {
           window.location.href = '/login';
         }, 2000);
-      } else {
-        setUserData({ name: user.user_metadata?.name || 'Guest', points: 0 });
+        return;
       }
+      
+      setUser(user);
+      setUserData({ name: user.user_metadata?.name || 'Guest', points: 0 });
+      console.log('User set:', user.id);
     };
     checkAuth();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed:', event, session);
-      setUser(session?.user || null);
+      console.log('Auth state changed:', event, 'Session:', session);
+      if (session && session.user) {
+        setUser(session.user);
+        setUserData({ name: session.user.user_metadata?.name || 'Guest', points: 0 });
+        console.log('Session updated. User ID:', session.user.id);
+      } else {
+        console.error('No session or user. Redirecting to login.');
+        setUser(null);
+        setAlert({ type: 'error', message: 'Session expired. Redirecting to login...' });
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 2000);
+      }
     });
 
     return () => {
@@ -72,26 +97,52 @@ const Insert = () => {
     };
   }, []);
 
+  // Start sensing
   const startSensing = async () => {
-    if (isSensing || !user) return;
+    console.log('startSensing called. User:', user);
+    if (!user || !user.id) {
+      console.error('Cannot start sensing: No authenticated user.');
+      setAlert({ type: 'error', message: 'You must be logged in to start sensing.' });
+      return;
+    }
+    if (isSensing) {
+      console.log('Already sensing. Ignoring request.');
+      return;
+    }
+
     setIsSensing(true);
     setSystemStatus('Scanning...');
+    console.log('Inserting start command for user:', user.id, 'Device ID:', deviceId);
 
     try {
+      // Ensure fresh session
+      const { data: sessionData, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        console.error('Session refresh failed:', refreshError);
+        throw new Error(`Failed to refresh session: ${refreshError.message} (Code: ${refreshError.code || 'N/A'})`);
+      }
+      console.log('Session refreshed:', sessionData);
+
       const { data, error } = await supabase
         .from('device_controls')
         .insert({
           device_id: deviceId,
           command: 'start',
-          user_id: userId,
-        });
+          user_id: user.id,
+        })
+        .select();
 
       if (error) {
-        throw new Error(`Failed to start sensing: ${error.message}`);
+        console.error('Supabase insert error:', error);
+        if (error.code === '42501') {
+          throw new Error('Permission denied for table users. Check foreign key or RLS policies.');
+        }
+        throw new Error(`Failed to start sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
       }
-      console.log('Start command sent:', data);
+      console.log('Start command inserted:', data);
+      setAlert({ type: 'success', message: 'Sensing started.' });
     } catch (error) {
-      console.error('Error sending start command:', error);
+      console.error('Error in startSensing:', error);
       setAlert({ type: 'error', message: error.message });
       setIsSensing(false);
       setSystemStatus('Idle');
@@ -110,7 +161,15 @@ const Insert = () => {
     }, 1000);
   };
 
+  // Stop sensing
   const stopSensing = async () => {
+    console.log('stopSensing called. User:', user);
+    if (!user || !user.id) {
+      console.error('Cannot stop sensing: No authenticated user.');
+      setAlert({ type: 'error', message: 'You must be logged in to stop sensing.' });
+      return;
+    }
+
     setIsSensing(false);
     setSystemStatus('Idle');
     setTimer('');
@@ -121,19 +180,23 @@ const Insert = () => {
         .insert({
           device_id: deviceId,
           command: 'stop',
-          user_id: userId,
-        });
+          user_id: user.id,
+        })
+        .select();
 
       if (error) {
-        throw new Error(`Failed to stop sensing: ${error.message}`);
+        console.error('Supabase stop error:', error);
+        throw new Error(`Failed to stop sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
       }
-      console.log('Stop command sent:', data);
+      console.log('Stop command inserted:', data);
+      setAlert({ type: 'success', message: 'Sensing stopped.' });
     } catch (error) {
-      console.error('Error sending stop command:', error);
+      console.error('Error in stopSensing:', error);
       setAlert({ type: 'error', message: error.message });
     }
   };
 
+  // Update earnings
   const updateEarnings = (bottleCount, canCount) => {
     const points = bottleCount * 2 + canCount * 3;
     const money = (bottleCount * 0.5 + canCount * 0.75).toFixed(2);
@@ -142,8 +205,16 @@ const Insert = () => {
     setMoneyEarned(money);
   };
 
+  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
+    console.log('handleSubmit called. User:', user);
+    if (!user || !user.id) {
+      console.error('Cannot submit: No authenticated user.');
+      setAlert({ type: 'error', message: 'You must be logged in to submit recyclables.' });
+      return;
+    }
+
     console.log('Submitting - Bottle Count:', bottleCount, 'Can Count:', canCount, 'Points Earned:', pointsEarned, 'Money Earned:', moneyEarned);
 
     setTotalBottleCount(prev => prev + bottleCount);
@@ -170,6 +241,7 @@ const Insert = () => {
     stopSensing();
   };
 
+  // Reset sensor data
   const resetSensorData = () => {
     setBottleCount(0);
     setCanCount(0);
@@ -180,20 +252,30 @@ const Insert = () => {
     setRecentDetections([]);
   };
 
+  // Fetch recent recyclables
   const fetchRecentRecyclables = async () => {
+    console.log('fetchRecentRecyclables called. User:', user);
+    if (!user || !user.id) {
+      console.error('Cannot fetch recyclables: No authenticated user.');
+      setAlert({ type: 'error', message: 'You must be logged in to fetch recyclables.' });
+      return;
+    }
+
     try {
       const timeThreshold = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       const { data, error } = await supabase
         .from('recyclables')
         .select('*')
         .eq('device_id', deviceId)
+        .eq('user_id', user.id)
         .gte('created_at', timeThreshold)
         .order('created_at', { ascending: false });
 
-      console.log('FetchRecentRecyclables - User:', user, 'Data:', data, 'Error:', error);
+      console.log('fetchRecentRecyclables - User ID:', user.id, 'Data:', data, 'Error:', error);
 
       if (error) {
-        throw new Error(`Failed to fetch recyclables: ${error.message}`);
+        console.error('Supabase fetch error:', error);
+        throw new Error(`Failed to fetch recyclables: ${error.message} (Code: ${error.code || 'N/A'})`);
       }
 
       if (data && data.length > 0) {
@@ -218,7 +300,7 @@ const Insert = () => {
         setCanCount(newCanCount);
         updateEarnings(newBottleCount, newCanCount);
       } else {
-        console.log('No recent recyclables found for device_id:', deviceId);
+        console.log('No recent recyclables found for device_id:', deviceId, 'and user_id:', user.id);
         setAlert({ type: 'info', message: 'No recent recyclables found.' });
         setMaterial('Unknown');
         setQuantity(0);
@@ -229,10 +311,15 @@ const Insert = () => {
     }
   };
 
+  // Real-time subscription and periodic fetch
   useEffect(() => {
-    if (!user) return;
+    console.log('Real-time subscription useEffect. User:', user);
+    if (!user || !user.id) {
+      console.error('Cannot subscribe to real-time updates: No authenticated user.');
+      return;
+    }
 
-    console.log('useEffect - userId:', userId, 'deviceId:', deviceId);
+    console.log('Setting up real-time subscription for user:', user.id, 'deviceId:', deviceId);
 
     fetchRecentRecyclables();
 
@@ -241,16 +328,16 @@ const Insert = () => {
     const baseRetryDelay = 5000;
 
     const subscribe = () => {
-      console.log('Attempting to subscribe to real-time updates...');
+      console.log('Subscribing to real-time updates for user:', user.id);
       if (subscriptionRef.current) {
         supabase.removeChannel(subscriptionRef.current);
       }
 
       subscriptionRef.current = supabase
-        .channel(`public:recyclables:device_id=eq.${deviceId}`, {
+        .channel(`public:recyclables:device_id=eq.${deviceId}:user_id=eq.${user.id}`, {
           config: {
             broadcast: { ack: true },
-            presence: { key: userId },
+            presence: { key: user.id },
           },
         })
         .on(
@@ -259,10 +346,10 @@ const Insert = () => {
             event: 'INSERT',
             schema: 'public',
             table: 'recyclables',
-            filter: `device_id=eq.${deviceId}`,
+            filter: `device_id=eq.${deviceId},user_id=eq.${user.id}`,
           },
           (payload) => {
-            console.log('Real-time event received:', payload);
+            console.log('Real-time event received for user:', user.id, 'Payload:', payload);
             const { material, quantity, user_id, created_at } = payload.new;
             console.log('New recyclable:', { material, quantity, user_id, created_at });
 
@@ -291,9 +378,9 @@ const Insert = () => {
           }
         )
         .subscribe((status, err) => {
-          console.log('Subscription status:', status, 'Error:', err ? err.message : 'No error details');
+          console.log('Subscription status:', status, 'Error:', err ? err.message : 'No error');
           if (status === 'SUBSCRIBED') {
-            console.log('Successfully subscribed to real-time updates for recyclables.');
+            console.log('Successfully subscribed to real-time updates for user:', user.id);
             setAlert({ type: 'success', message: 'Real-time subscription active.' });
             retryCount = 0;
           } else if (status === 'CLOSED') {
@@ -328,14 +415,14 @@ const Insert = () => {
     const interval = setInterval(fetchRecentRecyclables, 5000);
 
     return () => {
-      console.log('Unsubscribing from real-time updates');
+      console.log('Cleaning up real-time subscription');
       clearInterval(interval);
       if (subscriptionRef.current) {
         supabase.removeChannel(subscriptionRef.current);
         subscriptionRef.current = null;
       }
     };
-  }, [user, userId, bottleCount, canCount]);
+  }, [user, bottleCount, canCount]);
 
   return (
     <Layout title="Insert Recyclables">
@@ -378,11 +465,12 @@ const Insert = () => {
                 type="button"
                 className="control-btn refresh-btn"
                 onClick={fetchRecentRecyclables}
+                disabled={!user}
               >
                 <FontAwesomeIcon icon={faSync} /> Refresh
               </button>
             </div>
-            <button type="submit" className="control-btn submit-btn" disabled={!isSensing}>
+            <button type="submit" className="control-btn submit-btn" disabled={!isSensing || !user}>
               Add Recyclables
             </button>
             <div className="timer-display">{timer}</div>
