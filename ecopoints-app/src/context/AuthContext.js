@@ -8,39 +8,38 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Fetch the current user on mount
     const fetchUser = async () => {
       try {
         const { data: { user }, error } = await supabase.auth.getUser();
-        if (error) {
-          console.error('Error fetching user:', error.message);
+
+        if (error || !user) {
+          console.warn('No active session or user not found:', error?.message);
           setUser(null);
         } else {
           setUser(user);
         }
-        setLoading(false);
       } catch (err) {
         console.error('Unexpected error fetching user:', err);
         setUser(null);
+      } finally {
         setLoading(false);
       }
     };
 
     fetchUser();
 
-    // Listen for auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('Auth state changed:', event);
       if (event === 'SIGNED_IN') {
         setUser(session?.user ?? null);
-      } else if (event === 'SIGNED_OUT') {
+      } else if (event === 'SIGNED_OUT' || !session) {
         setUser(null);
       }
       setLoading(false);
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      authListener?.subscription?.unsubscribe();
     };
   }, []);
 
