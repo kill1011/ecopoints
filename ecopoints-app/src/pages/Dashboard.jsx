@@ -47,94 +47,67 @@ const Dashboard = () => {
           return;
         }
 
-        // Fetch user data from users table
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('points, name, bottles, cans')
-          .eq('id', session.user.id)
-          .limit(1)
-          .maybeSingle();
-        
-        if (userError) {
-          console.error('Database Error:', userError);
-          if (userError.message.includes('infinite recursion')) {
-            throw new Error('Database access error: Security policy issue. Please contact support.');
-          }
-          throw new Error(userError.message);
+        const userId = session.user.id;
+
+        // Aggregate data from recyclables table
+        const { data: recyclablesData, error: recyclablesError } = await supabase
+          .from('recyclables')
+          .select('material, quantity')
+          .eq('user_id', userId);
+
+        if (recyclablesError) {
+          console.error('Recyclables fetch error:', recyclablesError);
+          throw new Error('Failed to fetch recyclables: ' + recyclablesError.message);
         }
 
-        let updatedStats;
+        let totalPoints = 0;
+        let totalBottles = 0;
+        let totalCans = 0;
 
-        if (!userData || (userData.points === 0 && userData.bottles === 0 && userData.cans === 0)) {
-          console.log('No valid user data found, fetching from recyclables...');
-          
-          // Aggregate data from recyclables table
-          const { data: recyclablesData, error: recyclablesError } = await supabase
-            .from('recyclables')
-            .select('material, quantity')
-            .eq('user_id', session.user.id);
-
-          if (recyclablesError) {
-            console.error('Recyclables fetch error:', recyclablesError);
-            throw new Error('Failed to fetch recyclables: ' + recyclablesError.message);
+        recyclablesData.forEach(record => {
+          if (record.material === 'PLASTIC_BOTTLE') {
+            totalBottles += record.quantity;
+            totalPoints += record.quantity * 2; // 2 points per bottle
+          } else if (record.material === 'CAN') {
+            totalCans += record.quantity;
+            totalPoints += record.quantity * 3; // 3 points per can
           }
+        });
 
-          let totalPoints = 0;
-          let totalBottles = 0;
-          let totalCans = 0;
+        const calculatedMoney = calculateMoneyFromPoints(totalPoints);
 
-          recyclablesData.forEach(record => {
-            if (record.material === 'PLASTIC_BOTTLE') {
-              totalBottles += record.quantity;
-              totalPoints += record.quantity * 2; // 2 points per bottle
-            } else if (record.material === 'CAN') {
-              totalCans += record.quantity;
-              totalPoints += record.quantity * 3; // 3 points per can
-            }
-          });
+        const updatedStats = {
+          name: session.user.user_metadata?.name || 'Guest',
+          points: totalPoints,
+          money: calculatedMoney,
+          bottles: totalBottles,
+          cans: totalCans,
+        };
 
-          const calculatedMoney = calculateMoneyFromPoints(totalPoints);
+        // Update users table
+        const { data: userData, error: upsertError } = await supabase
+          .from('users')
+          .upsert([{
+            id: userId,
+            name: updatedStats.name,
+            email: session.user.email,
+            points: updatedStats.points,
+            bottles: updatedStats.bottles,
+            cans: updatedStats.cans,
+            money: updatedStats.money,
+            is_admin: false,
+          }], { onConflict: 'id' })
+          .select()
+          .single();
 
-          updatedStats = {
-            name: userData?.name || session.user.user_metadata?.name || 'Guest',
-            points: totalPoints,
-            money: calculatedMoney,
-            bottles: totalBottles,
-            cans: totalCans,
-          };
-
-          // Create or update user profile in users table
-          const { error: upsertError } = await supabase
-            .from('users')
-            .upsert([{
-              id: session.user.id,
-              name: updatedStats.name,
-              email: session.user.email,
-              points: updatedStats.points,
-              bottles: updatedStats.bottles,
-              cans: updatedStats.cans,
-              money: updatedStats.money,
-              is_admin: false,
-            }], { onConflict: 'id' });
-
-          if (upsertError) {
-            console.error('Profile upsert error:', upsertError);
-            throw new Error('Failed to update user profile: ' + upsertError.message);
-          }
-        } else {
-          const calculatedMoney = calculateMoneyFromPoints(userData.points || 0);
-          updatedStats = {
-            name: userData.name || 'Guest',
-            points: Number(userData.points) || 0,
-            money: calculatedMoney,
-            bottles: Number(userData.bottles) || 0,
-            cans: Number(userData.cans) || 0,
-          };
+        if (upsertError) {
+          console.error('Profile upsert error:', upsertError);
+          throw new Error('Failed to update user profile: ' + upsertError.message);
         }
 
         // Update localStorage
         localStorage.setItem('user', JSON.stringify({
-          id: session.user.id,
+          id: userId,
           email: session.user.email,
           name: updatedStats.name,
           points: updatedStats.points,
