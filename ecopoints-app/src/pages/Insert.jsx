@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { v4 as uuidv4 } from 'uuid';
 import Layout from '../components/Layout';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRecycle, faPlay, faStop, faSync } from '@fortawesome/free-solid-svg-icons';
@@ -34,6 +35,7 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
+  const [deviceId, setDeviceId] = useState('');
   const initialStats = JSON.parse(localStorage.getItem('userStats')) || {
     totalBottleCount: 0,
     totalCanCount: 0,
@@ -46,13 +48,11 @@ const Insert = () => {
   const [totalMoney, setTotalMoney] = useState(initialStats.totalMoney);
   const [recentDetections, setRecentDetections] = useState([]);
   const subscriptionRef = useRef(null);
-  const deviceId = 'esp32-cam-1';
 
   // Check authentication and refresh session
   useEffect(() => {
     const checkAuth = async () => {
       console.log('Checking authentication...');
-      // Refresh session to ensure valid JWT
       const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
       console.log('Session refresh:', refreshData, 'Refresh Error:', refreshError);
       
@@ -110,35 +110,80 @@ const Insert = () => {
       return;
     }
 
+    console.log('User ID:', user.id, 'User Email:', user.email);
+    const { data: { session } } = await supabase.auth.getSession();
+    console.log('Current Session:', session);
+
+    let newDeviceId = '438b2bf0-0158-4b62-a969-3d8b239a36ad';
+    console.log('Using ESP32 device_id:', newDeviceId);
+
+    const { data: existingDevice, error: checkError } = await supabase
+      .from('devices')
+      .select('user_id')
+      .eq('device_id', newDeviceId)
+      .single();
+    if (checkError && checkError.code !== 'PGRST116') {
+      console.error('Error checking device:', checkError);
+      setAlert({ type: 'error', message: 'Failed to check device.' });
+      return;
+    }
+    if (existingDevice && existingDevice.user_id !== user.id) {
+      console.log('Device ID exists for another user. Generating new device_id.');
+      newDeviceId = uuidv4();
+    }
+
+    setDeviceId(newDeviceId);
     setIsSensing(true);
     setSystemStatus('Scanning...');
-    console.log('Inserting start command for user:', user.id, 'Device ID:', deviceId);
+    console.log('Inserting start command for user:', user.id, 'Device ID:', newDeviceId);
 
     try {
-      // Ensure fresh session
+      const sessionId = uuidv4();
+      console.log('Session ID:', sessionId);
+
       const { data: sessionData, error: refreshError } = await supabase.auth.refreshSession();
       if (refreshError) {
         console.error('Session refresh failed:', refreshError);
-        throw new Error(`Failed to refresh session: ${refreshError.message} (Code: ${refreshError.code || 'N/A'})`);
+        throw new Error(`Failed to refresh session: ${refreshError.message}`);
       }
       console.log('Session refreshed:', sessionData);
 
+      const { data: { session } } = await supabase.auth.getSession();
+      const authToken = session?.access_token;
+      if (!authToken) {
+        throw new Error('Failed to get auth token');
+      }
+
+      console.log('Upserting device:', { device_id: newDeviceId, user_id: user.id });
+      const { error: deviceError } = await supabase
+        .from('devices')
+        .upsert([
+          { device_id: newDeviceId, user_id: user.id }
+        ], { onConflict: 'device_id' });
+      if (deviceError) {
+        console.error('Error registering device:', deviceError);
+        throw new Error(`Failed to register device: ${deviceError.message}`);
+      }
+      console.log('Device registered:', newDeviceId);
+
+      const payload = {
+        device_id: newDeviceId,
+        command: 'start',
+        user_id: user.id,
+        session_id: sessionId,
+        auth_token: authToken,
+      };
+      console.log('Inserting device control:', payload);
       const { data, error } = await supabase
         .from('device_controls')
-        .insert({
-          device_id: deviceId,
-          command: 'start',
-          user_id: user.id,
-        })
+        .insert(payload)
         .select();
 
       if (error) {
         console.error('Supabase insert error:', error);
-        if (error.code === '42501') {
-          throw new Error('Permission denied for table users. Check foreign key or RLS policies.');
-        }
-        throw new Error(`Failed to start sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
+        throw new Error(`Failed to start sensing: ${error.message}`);
       }
+
       console.log('Start command inserted:', data);
       setAlert({ type: 'success', message: 'Sensing started.' });
     } catch (error) {
@@ -170,18 +215,33 @@ const Insert = () => {
       return;
     }
 
+    console.log('User ID:', user.id, 'Device ID:', deviceId);
+
     setIsSensing(false);
     setSystemStatus('Idle');
     setTimer('');
 
     try {
+      const { data: sessionData, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        console.error('Session refresh failed:', refreshError);
+        throw new Error('Session refresh failed');
+      }
+      console.log('Session refreshed:', sessionData);
+
+      const sessionId = uuidv4();
+      console.log('Generated session_id:', sessionId);
+      const payload = {
+        device_id: deviceId,
+        command: 'stop',
+        user_id: user.id,
+        session_id: sessionId,
+      };
+      console.log('Inserting stop command:', payload);
+
       const { data, error } = await supabase
         .from('device_controls')
-        .insert({
-          device_id: deviceId,
-          command: 'stop',
-          user_id: user.id,
-        })
+        .insert(payload)
         .select();
 
       if (error) {
@@ -192,7 +252,7 @@ const Insert = () => {
       setAlert({ type: 'success', message: 'Sensing stopped.' });
     } catch (error) {
       console.error('Error in stopSensing:', error);
-      setAlert({ type: 'error', message: error.message });
+      setAlert({ type: 'error', message: `Failed to stop sensing: ${error.message}` });
     }
   };
 
@@ -266,7 +326,6 @@ const Insert = () => {
       const { data, error } = await supabase
         .from('recyclables')
         .select('*')
-        .eq('device_id', deviceId)
         .eq('user_id', user.id)
         .gte('created_at', timeThreshold)
         .order('created_at', { ascending: false });
@@ -293,6 +352,9 @@ const Insert = () => {
           }
           setMaterial(record.material);
           setQuantity(record.quantity);
+          if (!deviceId && record.device_id) {
+            setDeviceId(record.device_id);
+          }
         });
 
         console.log('Aggregated - Bottle Count:', newBottleCount, 'Can Count:', newCanCount);
@@ -300,7 +362,7 @@ const Insert = () => {
         setCanCount(newCanCount);
         updateEarnings(newBottleCount, newCanCount);
       } else {
-        console.log('No recent recyclables found for device_id:', deviceId, 'and user_id:', user.id);
+        console.log('No recent recyclables found for user_id:', user.id);
         setAlert({ type: 'info', message: 'No recent recyclables found.' });
         setMaterial('Unknown');
         setQuantity(0);
@@ -319,7 +381,7 @@ const Insert = () => {
       return;
     }
 
-    console.log('Setting up real-time subscription for user:', user.id, 'deviceId:', deviceId);
+    console.log('Setting up real-time subscription for user:', user.id);
 
     fetchRecentRecyclables();
 
@@ -334,7 +396,7 @@ const Insert = () => {
       }
 
       subscriptionRef.current = supabase
-        .channel(`public:recyclables:device_id=eq.${deviceId}:user_id=eq.${user.id}`, {
+        .channel(`public:recyclables:user_id=eq.${user.id}`, {
           config: {
             broadcast: { ack: true },
             presence: { key: user.id },
@@ -346,20 +408,23 @@ const Insert = () => {
             event: 'INSERT',
             schema: 'public',
             table: 'recyclables',
-            filter: `device_id=eq.${deviceId},user_id=eq.${user.id}`,
+            filter: `user_id=eq.${user.id}`,
           },
           (payload) => {
             console.log('Real-time event received for user:', user.id, 'Payload:', payload);
-            const { material, quantity, user_id, created_at } = payload.new;
-            console.log('New recyclable:', { material, quantity, user_id, created_at });
+            const { material, quantity, user_id, created_at, device_id } = payload.new;
+            console.log('New recyclable:', { material, quantity, user_id, created_at, device_id });
 
             setRecentDetections(prev => [
-              { material, quantity, user_id, created_at },
+              { material, quantity, user_id, created_at, device_id },
               ...prev.slice(0, 4),
             ]);
 
             setMaterial(material);
             setQuantity(quantity);
+            if (!deviceId && device_id) {
+              setDeviceId(device_id);
+            }
             if (material === 'PLASTIC_BOTTLE') {
               setBottleCount(prev => {
                 const newCount = prev + quantity;
@@ -379,13 +444,8 @@ const Insert = () => {
         )
         .subscribe((status, err) => {
           console.log('Subscription status:', status, 'Error:', err ? err.message : 'No error');
-          if (status === 'SUBSCRIBED') {
-            console.log('Successfully subscribed to real-time updates for user:', user.id);
-            setAlert({ type: 'success', message: 'Real-time subscription active.' });
-            retryCount = 0;
-          } else if (status === 'CLOSED') {
-            console.error('Subscription closed:', err ? err.message : 'No error details');
-            setAlert({ type: 'error', message: 'Real-time subscription failed. Use Refresh.' });
+          if (status === 'KILL') {
+            console.error('Subscription killed:', err ? err.message : 'No error details');
             if (retryCount < maxRetries) {
               const delay = baseRetryDelay * Math.pow(2, retryCount);
               console.log(`Retrying subscription (${retryCount + 1}/${maxRetries}) in ${delay}ms...`);
@@ -393,11 +453,9 @@ const Insert = () => {
               retryCount++;
             } else {
               console.error('Max retry attempts reached. Subscription failed.');
-              setAlert({ type: 'error', message: 'Real-time subscription failed permanently. Use Refresh.' });
             }
           } else if (status === 'TIMED_OUT') {
             console.error('Subscription timed out:', err ? err.message : 'No error details');
-            setAlert({ type: 'error', message: 'Real-time subscription timed out. Retrying...' });
             if (retryCount < maxRetries) {
               const delay = baseRetryDelay * Math.pow(2, retryCount);
               console.log(`Retrying subscription (${retryCount + 1}/${maxRetries}) in ${delay}ms...`);
