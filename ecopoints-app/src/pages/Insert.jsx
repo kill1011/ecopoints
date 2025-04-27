@@ -97,6 +97,29 @@ const Insert = () => {
     };
   }, []);
 
+  // Check for existing commands
+  const checkExistingCommands = async () => {
+    const { data, error } = await supabase
+      .from('device_controls')
+      .select('user_id, command')
+      .eq('device_id', '438b2bf0-0158-4b62-a969-3d8b239a36ad')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error checking existing commands:', error);
+      return false;
+    }
+    
+    if (data && data.length > 0) {
+      const activeCommand = data.find(cmd => cmd.command === 'start' && cmd.user_id !== user.id);
+      if (activeCommand) {
+        console.log('ESP32 is busy with another user:', activeCommand.user_id);
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Start sensing
   const startSensing = async () => {
     console.log('startSensing called. User:', user);
@@ -110,27 +133,18 @@ const Insert = () => {
       return;
     }
 
+    // Check if ESP32 is busy with another user
+    const isBusy = await checkExistingCommands();
+    if (isBusy) {
+      setAlert({ type: 'warning', message: 'ESP32 is currently busy. Your command has been queued.' });
+    }
+
     console.log('User ID:', user.id, 'User Email:', user.email);
     const { data: { session } } = await supabase.auth.getSession();
     console.log('Current Session:', session);
 
-    let newDeviceId = '438b2bf0-0158-4b62-a969-3d8b239a36ad';
+    const newDeviceId = '438b2bf0-0158-4b62-a969-3d8b239a36ad';
     console.log('Using ESP32 device_id:', newDeviceId);
-
-    const { data: existingDevice, error: checkError } = await supabase
-      .from('devices')
-      .select('user_id')
-      .eq('device_id', newDeviceId)
-      .single();
-    if (checkError && checkError.code !== 'PGRST116') {
-      console.error('Error checking device:', checkError);
-      setAlert({ type: 'error', message: 'Failed to check device.' });
-      return;
-    }
-    if (existingDevice && existingDevice.user_id !== user.id) {
-      console.log('Device ID exists for another user. Generating new device_id.');
-      newDeviceId = uuidv4();
-    }
 
     setDeviceId(newDeviceId);
     setIsSensing(true);
@@ -185,7 +199,7 @@ const Insert = () => {
       }
 
       console.log('Start command inserted:', data);
-      setAlert({ type: 'success', message: 'Sensing started.' });
+      setAlert({ type: 'success', message: isBusy ? 'Command queued successfully.' : 'Sensing started.' });
     } catch (error) {
       console.error('Error in startSensing:', error);
       setAlert({ type: 'error', message: error.message });
