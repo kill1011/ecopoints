@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import Layout from '../components/Layout';
@@ -15,11 +15,6 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
     persistSession: true,
     detectSessionInUrl: true,
   },
-  realtime: {
-    params: {
-      eventsPerSecond: 10,
-    },
-  },
 });
 
 const Insert = () => {
@@ -35,288 +30,18 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
-  const [deviceId, setDeviceId] = useState('');
-  const initialStats = JSON.parse(localStorage.getItem('userStats')) || {
-    totalBottleCount: 0,
-    totalCanCount: 0,
-    totalPoints: 0,
-    totalMoney: 0,
-  };
-  const [totalBottleCount, setTotalBottleCount] = useState(initialStats.totalBottleCount);
-  const [totalCanCount, setTotalCanCount] = useState(initialStats.totalCanCount);
-  const [totalPoints, setTotalPoints] = useState(initialStats.totalPoints);
-  const [totalMoney, setTotalMoney] = useState(initialStats.totalMoney);
+  const [deviceId] = useState('438b2bf0-0158-4b62-a969-3d8b239a36ad');
+  const [totalBottleCount, setTotalBottleCount] = useState(0);
+  const [totalCanCount, setTotalCanCount] = useState(0);
+  const [totalPoints, setTotalPoints] = useState(0);
+  const [totalMoney, setTotalMoney] = useState(0);
   const [recentDetections, setRecentDetections] = useState([]);
-  const subscriptionRef = useRef(null);
-
-  // Check authentication and refresh session
-  useEffect(() => {
-    const checkAuth = async () => {
-      console.log('Checking authentication...');
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      console.log('Session refresh:', refreshData, 'Refresh Error:', refreshError);
-      
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      console.log('Session:', session, 'Session Error:', sessionError);
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      console.log('Authenticated user:', user, 'User Error:', userError);
-      
-      if (refreshError || sessionError || !session || !session.user || userError || !user) {
-        console.error('Authentication failed. Redirecting to login.');
-        setAlert({ type: 'error', message: 'User not authenticated. Redirecting to login...' });
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 2000);
-        return;
-      }
-      
-      setUser(user);
-      setUserData({ name: user.user_metadata?.name || 'Guest', points: 0 });
-      console.log('User set:', user.id);
-    };
-    checkAuth();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed:', event, 'Session:', session);
-      if (session && session.user) {
-        setUser(session.user);
-        setUserData({ name: session.user.user_metadata?.name || 'Guest', points: 0 });
-        console.log('Session updated. User ID:', session.user.id);
-      } else {
-        console.error('No session or user. Redirecting to login.');
-        setUser(null);
-        setAlert({ type: 'error', message: 'Session expired. Redirecting to login...' });
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 2000);
-      }
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  // Check for existing commands
-  const checkExistingCommands = async () => {
-    const { data, error } = await supabase
-      .from('device_controls')
-      .select('user_id, command')
-      .eq('device_id', '438b2bf0-0158-4b62-a969-3d8b239a36ad')
-      .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error checking existing commands:', error);
-      return false;
-    }
-    
-    if (data && data.length > 0) {
-      const activeCommand = data.find(cmd => cmd.command === 'start' && cmd.user_id !== user.id);
-      if (activeCommand) {
-        console.log('ESP32 is busy with another user:', activeCommand.user_id);
-        return true;
-      }
-    }
-    return false;
-  };
-
-  // Start sensing
-  const startSensing = async () => {
-    console.log('startSensing called. User:', user);
-    if (!user || !user.id) {
-      console.error('Cannot start sensing: No authenticated user.');
-      setAlert({ type: 'error', message: 'You must be logged in to start sensing.' });
-      return;
-    }
-    if (isSensing) {
-      console.log('Already sensing. Ignoring request.');
-      return;
-    }
-
-    // Check if ESP32 is busy with another user
-    const isBusy = await checkExistingCommands();
-    if (isBusy) {
-      setAlert({ type: 'warning', message: 'ESP32 is currently busy. Your command has been queued.' });
-    }
-
-    console.log('User ID:', user.id, 'User Email:', user.email);
-    const { data: { session } } = await supabase.auth.getSession();
-    console.log('Current Session:', session);
-
-    const newDeviceId = '438b2bf0-0158-4b62-a969-3d8b239a36ad';
-    console.log('Using ESP32 device_id:', newDeviceId);
-
-    setDeviceId(newDeviceId);
-    setIsSensing(true);
-    setSystemStatus('Scanning...');
-    console.log('Inserting start command for user:', user.id, 'Device ID:', newDeviceId);
-
-    try {
-      const sessionId = uuidv4();
-      console.log('Session ID:', sessionId);
-
-      const { data: sessionData, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) {
-        console.error('Session refresh failed:', refreshError);
-        throw new Error(`Failed to refresh session: ${refreshError.message}`);
-      }
-      console.log('Session refreshed:', sessionData);
-
-      const { data: { session } } = await supabase.auth.getSession();
-      const authToken = session?.access_token;
-      if (!authToken) {
-        throw new Error('Failed to get auth token');
-      }
-
-      console.log('Upserting device:', { device_id: newDeviceId, user_id: user.id });
-      const { error: deviceError } = await supabase
-        .from('devices')
-        .upsert([
-          { device_id: newDeviceId, user_id: user.id }
-        ], { onConflict: 'device_id' });
-      if (deviceError) {
-        console.error('Error registering device:', deviceError);
-        throw new Error(`Failed to register device: ${deviceError.message}`);
-      }
-      console.log('Device registered:', newDeviceId);
-
-      const payload = {
-        device_id: newDeviceId,
-        command: 'start',
-        user_id: user.id,
-        session_id: sessionId,
-        auth_token: authToken,
-      };
-      console.log('Inserting device control:', payload);
-      const { data, error } = await supabase
-        .from('device_controls')
-        .insert(payload)
-        .select();
-
-      if (error) {
-        console.error('Supabase insert error:', error);
-        throw new Error(`Failed to start sensing: ${error.message}`);
-      }
-
-      console.log('Start command inserted:', data);
-      setAlert({ type: 'success', message: isBusy ? 'Command queued successfully.' : 'Sensing started.' });
-    } catch (error) {
-      console.error('Error in startSensing:', error);
-      setAlert({ type: 'error', message: error.message });
-      setIsSensing(false);
-      setSystemStatus('Idle');
-      return;
-    }
-
-    let timeLeft = 30;
-    const interval = setInterval(() => {
-      if (!isSensing) {
-        clearInterval(interval);
-        return;
-      }
-      setTimer(`Time Left: ${timeLeft}s`);
-      timeLeft--;
-      if (timeLeft < 0) stopSensing();
-    }, 1000);
-  };
-
-  // Stop sensing
-  const stopSensing = async () => {
-    console.log('stopSensing called. User:', user);
-    if (!user || !user.id) {
-      console.error('Cannot stop sensing: No authenticated user.');
-      setAlert({ type: 'error', message: 'You must be logged in to stop sensing.' });
-      return;
-    }
-
-    console.log('User ID:', user.id, 'Device ID:', deviceId);
-
-    setIsSensing(false);
-    setSystemStatus('Idle');
-    setTimer('');
-
-    try {
-      const { data: sessionData, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) {
-        console.error('Session refresh failed:', refreshError);
-        throw new Error('Session refresh failed');
-      }
-      console.log('Session refreshed:', sessionData);
-
-      const sessionId = uuidv4();
-      console.log('Generated session_id:', sessionId);
-      const payload = {
-        device_id: deviceId,
-        command: 'stop',
-        user_id: user.id,
-        session_id: sessionId,
-      };
-      console.log('Inserting stop command:', payload);
-
-      const { data, error } = await supabase
-        .from('device_controls')
-        .insert(payload)
-        .select();
-
-      if (error) {
-        console.error('Supabase stop error:', error);
-        throw new Error(`Failed to stop sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
-      }
-      console.log('Stop command inserted:', data);
-      setAlert({ type: 'success', message: 'Sensing stopped.' });
-    } catch (error) {
-      console.error('Error in stopSensing:', error);
-      setAlert({ type: 'error', message: `Failed to stop sensing: ${error.message}` });
-    }
-  };
-
-  // Update earnings
-  const updateEarnings = (bottleCount, canCount) => {
-    const points = bottleCount * 2 + canCount * 3;
-    const money = (bottleCount * 0.5 + canCount * 0.75).toFixed(2);
-    console.log('Updating earnings - Bottle Count:', bottleCount, 'Can Count:', canCount, 'Points:', points, 'Money:', money);
-    setPointsEarned(points);
-    setMoneyEarned(money);
-  };
-
-  // Handle form submission
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    console.log('handleSubmit called. User:', user);
-    if (!user || !user.id) {
-      console.error('Cannot submit: No authenticated user.');
-      setAlert({ type: 'error', message: 'You must be logged in to submit recyclables.' });
-      return;
-    }
-
-    console.log('Submitting - Bottle Count:', bottleCount, 'Can Count:', canCount, 'Points Earned:', pointsEarned, 'Money Earned:', moneyEarned);
-
-    setTotalBottleCount(prev => prev + bottleCount);
-    setTotalCanCount(prev => prev + canCount);
-    setTotalPoints(prev => prev + pointsEarned);
-    setTotalMoney(prev => (parseFloat(prev) + parseFloat(moneyEarned)).toFixed(2));
-
-    setUserData(prev => ({
-      ...prev,
-      points: prev.points + pointsEarned,
-    }));
-
-    const updatedStats = {
-      totalBottleCount: totalBottleCount + bottleCount,
-      totalCanCount: totalCanCount + canCount,
-      totalPoints: totalPoints + pointsEarned,
-      totalMoney: (parseFloat(totalMoney) + parseFloat(moneyEarned)).toFixed(2),
-    };
-    console.log('Saving to localStorage:', updatedStats);
-    localStorage.setItem('userStats', JSON.stringify(updatedStats));
-
-    setAlert({ type: 'success', message: 'Recyclables added successfully!' });
-    resetSensorData();
-    stopSensing();
-  };
+  const timerRef = useRef(null);
+  const commandDebounceRef = useRef(null);
+  const pollRef = useRef(null);
 
   // Reset sensor data
-  const resetSensorData = () => {
+  const resetSensorData = useCallback(() => {
     setBottleCount(0);
     setCanCount(0);
     setQuantity(0);
@@ -324,41 +49,45 @@ const Insert = () => {
     setPointsEarned(0);
     setMoneyEarned(0);
     setRecentDetections([]);
-  };
+  }, []);
+
+  // Update earnings
+  const updateEarnings = useCallback((bottleCount, canCount) => {
+    const points = bottleCount * 2 + canCount * 3;
+    const money = (bottleCount * 0.5 + canCount * 0.5).toFixed(2);
+    setPointsEarned(points);
+    setMoneyEarned(money);
+    return { points, money };
+  }, []);
 
   // Fetch recent recyclables
-  const fetchRecentRecyclables = async () => {
-    console.log('fetchRecentRecyclables called. User:', user);
-    if (!user || !user.id) {
-      console.error('Cannot fetch recyclables: No authenticated user.');
-      setAlert({ type: 'error', message: 'You must be logged in to fetch recyclables.' });
+  const fetchRecentRecyclables = useCallback(async () => {
+    if (!user) {
+      console.log('fetchRecentRecyclables: No user authenticated.');
+      setAlert({ type: 'error', message: 'Please log in to fetch recyclables.' });
       return;
     }
 
     try {
-      const timeThreshold = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      console.log('Fetching recent recyclables for user:', user.id);
       const { data, error } = await supabase
         .from('recyclables')
-        .select('*')
+        .select('material, quantity, created_at, device_id, session_id')
         .eq('user_id', user.id)
-        .gte('created_at', timeThreshold)
-        .order('created_at', { ascending: false });
-
-      console.log('fetchRecentRecyclables - User ID:', user.id, 'Data:', data, 'Error:', error);
+        .order('created_at', { ascending: false })
+        .limit(10);
 
       if (error) {
-        console.error('Supabase fetch error:', error);
-        throw new Error(`Failed to fetch recyclables: ${error.message} (Code: ${error.code || 'N/A'})`);
+        console.error('fetchRecentRecyclables error:', error);
+        throw new Error(`Failed to fetch recyclables: ${error.message}`);
       }
 
-      if (data && data.length > 0) {
-        console.log('Fetched recyclables:', data);
+      console.log('Recent recyclables:', data);
+      if (data?.length > 0) {
         setRecentDetections(data);
-
         let newBottleCount = 0;
         let newCanCount = 0;
         data.forEach(record => {
-          console.log('Processing record:', record);
           if (record.material === 'PLASTIC_BOTTLE') {
             newBottleCount += record.quantity;
           } else if (record.material === 'CAN') {
@@ -366,135 +95,379 @@ const Insert = () => {
           }
           setMaterial(record.material);
           setQuantity(record.quantity);
-          if (!deviceId && record.device_id) {
-            setDeviceId(record.device_id);
-          }
         });
-
-        console.log('Aggregated - Bottle Count:', newBottleCount, 'Can Count:', newCanCount);
         setBottleCount(newBottleCount);
         setCanCount(newCanCount);
         updateEarnings(newBottleCount, newCanCount);
       } else {
-        console.log('No recent recyclables found for user_id:', user.id);
+        console.log('No recent recyclables found for user:', user.id);
         setAlert({ type: 'info', message: 'No recent recyclables found.' });
-        setMaterial('Unknown');
-        setQuantity(0);
+        resetSensorData();
       }
     } catch (error) {
-      console.error('Error fetching recyclables:', error);
+      console.error('fetchRecentRecyclables error:', error);
       setAlert({ type: 'error', message: error.message });
     }
-  };
+  }, [user, updateEarnings, resetSensorData]);
 
-  // Real-time subscription and periodic fetch
-  useEffect(() => {
-    console.log('Real-time subscription useEffect. User:', user);
-    if (!user || !user.id) {
-      console.error('Cannot subscribe to real-time updates: No authenticated user.');
+  // Check for existing commands
+  const checkExistingCommands = useCallback(async () => {
+    if (!user) {
+      console.log('checkExistingCommands: No user, skipping.');
+      return false;
+    }
+    try {
+      console.log('Checking existing commands for device:', deviceId);
+      const { data, error } = await supabase
+        .from('device_controls')
+        .select('id, user_id, command, processed')
+        .eq('device_id', deviceId)
+        .eq('processed', false)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error checking commands:', error);
+        throw new Error(`Failed to check commands: ${error.message}`);
+      }
+
+      console.log('Existing commands:', data);
+      if (data?.length > 0) {
+        const activeCommand = data.find(cmd => cmd.command === 'start' && cmd.user_id !== user.id);
+        if (activeCommand) {
+          console.log('ESP32 busy with user:', activeCommand.user_id);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Unexpected error checking commands:', error);
+      setAlert({ type: 'warning', message: 'Error checking device status.' });
+      return false;
+    }
+  }, [user, deviceId]);
+
+  // Debounced start sensing
+  const startSensing = useCallback(async () => {
+    if (commandDebounceRef.current) {
+      clearTimeout(commandDebounceRef.current);
+    }
+
+    commandDebounceRef.current = setTimeout(async () => {
+      console.log('startSensing triggered');
+      if (!user) {
+        console.log('startSensing: No user authenticated.');
+        setAlert({ type: 'error', message: 'Please log in to start sensing.' });
+        return;
+      }
+      if (isSensing) {
+        console.log('startSensing: Already sensing, ignoring.');
+        return;
+      }
+
+      const maxRetries = 3;
+      let retryCount = 0;
+
+      while (retryCount < maxRetries) {
+        try {
+          const isBusy = await checkExistingCommands();
+          console.log('Device busy:', isBusy);
+          if (isBusy) {
+            setAlert({ type: 'warning', message: 'Device is busy with another user. Your command is queued.' });
+          }
+
+          console.log('Refreshing auth session...');
+          const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError || !session?.access_token) {
+            console.error('Session error:', sessionError);
+            throw new Error('No valid auth token.');
+          }
+          console.log('Auth token retrieved:', session.access_token.substring(0, 10) + '...');
+
+          const payload = {
+            device_id: deviceId,
+            command: 'start',
+            user_id: user.id,
+            session_id: uuidv4(),
+            auth_token: session.access_token,
+            processed: false,
+            created_at: new Date().toISOString(),
+          };
+          console.log('Inserting start command:', payload);
+
+          const { data, error } = await supabase
+            .from('device_controls')
+            .insert(payload)
+            .select();
+
+          if (error) {
+            console.error('Supabase insert error:', {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint,
+            });
+            if (error.code === '429' && retryCount < maxRetries - 1) {
+              console.log(`Rate limit hit, retrying after ${1000 * (retryCount + 1)}ms...`);
+              await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+              retryCount++;
+              continue;
+            }
+            throw new Error(`Failed to start sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
+          }
+
+          console.log('Start command inserted:', data);
+          setIsSensing(true);
+          setSystemStatus('Scanning...');
+          setAlert({ type: 'success', message: isBusy ? 'Command queued.' : 'Sensing started.' });
+
+          let timeLeft = 60;
+          setTimer(`Time Left: ${timeLeft}s`);
+          timerRef.current = setInterval(() => {
+            timeLeft--;
+            setTimer(`Time Left: ${timeLeft}s`);
+            if (timeLeft <= 0) {
+              stopSensing();
+            }
+          }, 1000);
+          console.log('startSensing completed successfully');
+          break;
+        } catch (error) {
+          console.error('startSensing error:', {
+            message: error.message,
+            stack: error.stack,
+          });
+          setAlert({ type: 'error', message: error.message });
+          setIsSensing(false);
+          setSystemStatus('Idle');
+          if (retryCount < maxRetries - 1) {
+            console.log(`Retrying startSensing (${retryCount + 1}/${maxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            retryCount++;
+          } else {
+            break;
+          }
+        }
+      }
+    }, 500);
+  }, [user, isSensing, deviceId, checkExistingCommands]);
+
+  // Stop sensing
+  const stopSensing = useCallback(async () => {
+    if (commandDebounceRef.current) {
+      clearTimeout(commandDebounceRef.current);
+    }
+
+    commandDebounceRef.current = setTimeout(async () => {
+      if (!user) {
+        console.log('stopSensing: No user authenticated.');
+        setAlert({ type: 'error', message: 'Please log in to stop sensing.' });
+        return;
+      }
+
+      console.log('Stopping sensing...');
+      setIsSensing(false);
+      setSystemStatus('Idle');
+      setTimer('');
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      try {
+        console.log('Refreshing auth session...');
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError || !session?.access_token) {
+          console.error('Session error:', sessionError);
+          throw new Error('No valid auth token.');
+        }
+
+        const payload = {
+          device_id: deviceId,
+          command: 'stop',
+          user_id: user.id,
+          session_id: uuidv4(),
+          auth_token: session.access_token,
+          processed: false,
+          created_at: new Date().toISOString(),
+        };
+        console.log('Inserting stop command:', payload);
+
+        const { data, error } = await supabase
+          .from('device_controls')
+          .insert(payload)
+          .select();
+
+        if (error) {
+          console.error('Supabase insert error:', error);
+          throw new Error(`Failed to stop sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
+        }
+
+        console.log('Stop command inserted:', data);
+        setAlert({ type: 'success', message: 'Sensing stopped.' });
+      } catch (error) {
+        console.error('stopSensing error:', error);
+        setAlert({ type: 'error', message: error.message });
+      }
+    }, 500);
+  }, [user, deviceId]);
+
+  // Save user stats to Supabase
+  const saveUserStats = useCallback(async () => {
+    if (!user) {
+      console.log('saveUserStats: No user authenticated.');
+      return;
+    }
+    try {
+      console.log('Saving user stats for user:', user.id);
+      const updates = {
+        user_id: user.id,
+        total_bottle_count: totalBottleCount + bottleCount,
+        total_can_count: totalCanCount + canCount,
+        total_points: totalPoints + pointsEarned,
+        total_money: parseFloat(totalMoney) + parseFloat(moneyEarned),
+        updated_at: new Date().toISOString(),
+      };
+      console.log('User stats update:', updates);
+
+      const { error } = await supabase
+        .from('user_stats')
+        .upsert(updates, { onConflict: 'user_id' });
+
+      if (error) {
+        console.error('saveUserStats error:', error);
+        throw new Error(`Failed to save user stats: ${error.message}`);
+      }
+      console.log('User stats saved successfully.');
+      setTotalBottleCount(updates.total_bottle_count);
+      setTotalCanCount(updates.total_can_count);
+      setTotalPoints(updates.total_points);
+      setTotalMoney(updates.total_money.toFixed(2));
+    } catch (error) {
+      console.error('saveUserStats error:', error);
+      setAlert({ type: 'error', message: error.message });
+    }
+  }, [user, totalBottleCount, totalCanCount, totalPoints, totalMoney, bottleCount, canCount, pointsEarned, moneyEarned]);
+
+  // Handle form submission
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!user) {
+      console.log('handleSubmit: No user authenticated.');
+      setAlert({ type: 'error', message: 'Please log in to submit recyclables.' });
       return;
     }
 
-    console.log('Setting up real-time subscription for user:', user.id);
+    console.log('Submitting recyclables:', { bottleCount, canCount });
+    const { points, money } = updateEarnings(bottleCount, canCount);
+    setTotalBottleCount(prev => prev + bottleCount);
+    setTotalCanCount(prev => prev + canCount);
+    setTotalPoints(prev => prev + points);
+    setTotalMoney(prev => (parseFloat(prev) + parseFloat(money)).toFixed(2));
 
-    fetchRecentRecyclables();
+    await saveUserStats();
 
-    let retryCount = 0;
-    const maxRetries = 5;
-    const baseRetryDelay = 5000;
+    setAlert({ type: 'success', message: 'Recyclables recorded!' });
+    resetSensorData();
+    stopSensing();
+  };
 
-    const subscribe = () => {
-      console.log('Subscribing to real-time updates for user:', user.id);
-      if (subscriptionRef.current) {
-        supabase.removeChannel(subscriptionRef.current);
+  // Initialize authentication and fetch user stats
+  useEffect(() => {
+    const initializeAuth = async () => {
+      console.log('Initializing authentication...');
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session || !session.user) {
+        console.error('Authentication failed:', sessionError);
+        setAlert({ type: 'error', message: 'Please log in to continue.' });
+        setTimeout(() => window.location.href = '/login', 2000);
+        return;
       }
 
-      subscriptionRef.current = supabase
-        .channel(`public:recyclables:user_id=eq.${user.id}`, {
-          config: {
-            broadcast: { ack: true },
-            presence: { key: user.id },
-          },
-        })
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'recyclables',
-            filter: `user_id=eq.${user.id}`,
-          },
-          (payload) => {
-            console.log('Real-time event received for user:', user.id, 'Payload:', payload);
-            const { material, quantity, user_id, created_at, device_id } = payload.new;
-            console.log('New recyclable:', { material, quantity, user_id, created_at, device_id });
+      setUser(session.user);
+      setUserData({ name: session.user.user_metadata?.name || 'Guest', points: 0 });
+      console.log('User authenticated:', session.user.id);
 
-            setRecentDetections(prev => [
-              { material, quantity, user_id, created_at, device_id },
-              ...prev.slice(0, 4),
-            ]);
+      try {
+        const { data, error } = await supabase
+          .from('user_stats')
+          .select('total_bottle_count, total_can_count, total_points, total_money')
+          .eq('user_id', session.user.id)
+          .single();
 
-            setMaterial(material);
-            setQuantity(quantity);
-            if (!deviceId && device_id) {
-              setDeviceId(device_id);
-            }
-            if (material === 'PLASTIC_BOTTLE') {
-              setBottleCount(prev => {
-                const newCount = prev + quantity;
-                console.log('Real-time - Updated Bottle Count:', newCount);
-                updateEarnings(newCount, canCount);
-                return newCount;
+        if (error) {
+          if (error.code === 'PGRST116') {
+            const { error: insertError } = await supabase
+              .from('user_stats')
+              .insert({
+                user_id: session.user.id,
+                total_bottle_count: 0,
+                total_can_count: 0,
+                total_points: 0,
+                total_money: 0,
               });
-            } else if (material === 'CAN') {
-              setCanCount(prev => {
-                const newCount = prev + quantity;
-                console.log('Real-time - Updated Can Count:', newCount);
-                updateEarnings(bottleCount, newCount);
-                return newCount;
-              });
-            }
-          }
-        )
-        .subscribe((status, err) => {
-          console.log('Subscription status:', status, 'Error:', err ? err.message : 'No error');
-          if (status === 'KILL') {
-            console.error('Subscription killed:', err ? err.message : 'No error details');
-            if (retryCount < maxRetries) {
-              const delay = baseRetryDelay * Math.pow(2, retryCount);
-              console.log(`Retrying subscription (${retryCount + 1}/${maxRetries}) in ${delay}ms...`);
-              setTimeout(subscribe, delay);
-              retryCount++;
-            } else {
-              console.error('Max retry attempts reached. Subscription failed.');
-            }
-          } else if (status === 'TIMED_OUT') {
-            console.error('Subscription timed out:', err ? err.message : 'No error details');
-            if (retryCount < maxRetries) {
-              const delay = baseRetryDelay * Math.pow(2, retryCount);
-              console.log(`Retrying subscription (${retryCount + 1}/${maxRetries}) in ${delay}ms...`);
-              setTimeout(subscribe, delay);
-              retryCount++;
+            if (insertError) {
+              console.error('Error initializing user stats:', insertError);
+              setAlert({ type: 'error', message: 'Failed to initialize user stats.' });
             }
           } else {
-            console.log('Subscription status changed:', status);
+            console.error('Error fetching user stats:', error);
+            setAlert({ type: 'error', message: `Failed to load user stats: ${error.message}` });
           }
-        });
-    };
+          return;
+        }
 
-    subscribe();
-
-    const interval = setInterval(fetchRecentRecyclables, 5000);
-
-    return () => {
-      console.log('Cleaning up real-time subscription');
-      clearInterval(interval);
-      if (subscriptionRef.current) {
-        supabase.removeChannel(subscriptionRef.current);
-        subscriptionRef.current = null;
+        setTotalBottleCount(data.total_bottle_count);
+        setTotalCanCount(data.total_can_count);
+        setTotalPoints(data.total_points);
+        setTotalMoney(data.total_money.toFixed(2));
+        console.log('User stats loaded:', data);
+      } catch (error) {
+        console.error('Unexpected error fetching user stats:', error);
+        setAlert({ type: 'error', message: 'Unexpected error loading user stats.' });
       }
     };
-  }, [user, bottleCount, canCount]);
+
+    initializeAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event);
+      if (session?.user) {
+        setUser(session.user);
+        setUserData({ name: session.user.user_metadata?.name || 'Guest', points: 0 });
+      } else {
+        setUser(null);
+        setAlert({ type: 'error', message: 'Session expired. Please log in.' });
+        setTimeout(() => window.location.href = '/login', 2000);
+      }
+    });
+
+    return () => authListener.subscription.unsubscribe();
+  }, []);
+
+  // Poll for recent recyclables
+  useEffect(() => {
+    if (!user || !isSensing) {
+      console.log("Polling skipped: user=" + (user ? user.id : "null") + ", isSensing=" + isSensing);
+      return;
+    }
+
+    console.log("Starting recyclables polling...");
+    const pollRecyclables = async () => {
+      console.log("Polling recyclables for user: " + user.id);
+      await fetchRecentRecyclables();
+    };
+
+    pollRecyclables();
+    pollRef.current = setInterval(pollRecyclables, 5000);
+
+    return () => {
+      console.log("Stopping recyclables polling...");
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [user, isSensing, fetchRecentRecyclables]);
 
   return (
     <Layout title="Insert Recyclables">
