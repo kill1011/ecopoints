@@ -274,11 +274,11 @@ const Insert = () => {
       }
 
       try {
-        console.log('Refreshing auth session...');
+        console.log('Refreshing auth session for stop...');
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (sessionError || !session?.access_token) {
-          console.error('Session error:', sessionError);
-          throw new Error('No valid auth token.');
+          console.error('Session error in stopSensing:', sessionError);
+          throw new Error('No valid auth token for stop.');
         }
 
         const payload = {
@@ -286,7 +286,7 @@ const Insert = () => {
           command: 'stop',
           user_id: user.id,
           session_id: uuidv4(),
-          auth_token: session.access_token,
+          auth_token: session.access_token, // Added auth_token
           processed: false,
           created_at: new Date().toISOString(),
         };
@@ -298,7 +298,7 @@ const Insert = () => {
           .select();
 
         if (error) {
-          console.error('Supabase insert error:', error);
+          console.error('Supabase stop error:', error);
           throw new Error(`Failed to stop sensing: ${error.message} (Code: ${error.code || 'N/A'})`);
         }
 
@@ -307,6 +307,7 @@ const Insert = () => {
       } catch (error) {
         console.error('stopSensing error:', error);
         setAlert({ type: 'error', message: error.message });
+        setIsSensing(true); // Revert to sensing state on error
       }
     }, 500);
   }, [user, deviceId]);
@@ -539,6 +540,7 @@ const Insert = () => {
         </div>
 
         <div className="history-card">
+          <div className="stat-label">Recent Detections</div>
           <div className="stat-label">Recent Detections</div>
           {recentDetections.length > 0 ? (
             <ul>
