@@ -30,7 +30,7 @@ const Insert = () => {
   const [moneyEarned, setMoneyEarned] = useState(0);
   const [isSensing, setIsSensing] = useState(false);
   const [timer, setTimer] = useState('');
-  const [deviceId] = useState('438b2bf0-0158-4b62-a969-3d8b239a36ad');
+  const [deviceId] = useState('esp32-cam-1');
   const [totalBottleCount, setTotalBottleCount] = useState(0);
   const [totalCanCount, setTotalCanCount] = useState(0);
   const [totalPoints, setTotalPoints] = useState(0);
@@ -40,7 +40,6 @@ const Insert = () => {
   const commandDebounceRef = useRef(null);
   const pollRef = useRef(null);
 
-  // Reset sensor data
   const resetSensorData = useCallback(() => {
     setBottleCount(0);
     setCanCount(0);
@@ -51,7 +50,6 @@ const Insert = () => {
     setRecentDetections([]);
   }, []);
 
-  // Update earnings
   const updateEarnings = useCallback((bottleCount, canCount) => {
     const points = bottleCount * 2 + canCount * 3;
     const money = (bottleCount * 0.5 + canCount * 0.5).toFixed(2);
@@ -60,7 +58,6 @@ const Insert = () => {
     return { points, money };
   }, []);
 
-  // Fetch recent recyclables
   const fetchRecentRecyclables = useCallback(async () => {
     if (!user) {
       console.log('fetchRecentRecyclables: No user authenticated.');
@@ -110,7 +107,6 @@ const Insert = () => {
     }
   }, [user, updateEarnings, resetSensorData]);
 
-  // Check for existing commands
   const checkExistingCommands = useCallback(async () => {
     if (!user) {
       console.log('checkExistingCommands: No user, skipping.');
@@ -146,7 +142,31 @@ const Insert = () => {
     }
   }, [user, deviceId]);
 
-  // Debounced start sensing
+  const cleanupUserCommands = useCallback(async () => {
+    if (!user) {
+      console.log('cleanupUserCommands: No user authenticated.');
+      return;
+    }
+    try {
+      console.log('Cleaning up unprocessed commands for user:', user.id);
+      const { error } = await supabase
+        .from('device_controls')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('device_id', deviceId)
+        .eq('processed', false);
+
+      if (error) {
+        console.error('Error cleaning up commands:', error);
+        throw new Error(`Failed to clean up commands: ${error.message}`);
+      }
+      console.log('Unprocessed commands cleaned up successfully.');
+    } catch (error) {
+      console.error('cleanupUserCommands error:', error);
+      setAlert({ type: 'warning', message: 'Error cleaning up previous commands.' });
+    }
+  }, [user, deviceId]);
+
   const startSensing = useCallback(async () => {
     if (commandDebounceRef.current) {
       clearTimeout(commandDebounceRef.current);
@@ -172,8 +192,11 @@ const Insert = () => {
           const isBusy = await checkExistingCommands();
           console.log('Device busy:', isBusy);
           if (isBusy) {
-            setAlert({ type: 'warning', message: 'Device is busy with another user. Your command is queued.' });
+            setAlert({ type: 'warning', message: 'Device is busy with another user. Please try again later.' });
+            return;
           }
+
+          await cleanupUserCommands();
 
           console.log('Refreshing auth session...');
           const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -188,7 +211,7 @@ const Insert = () => {
             command: 'start',
             user_id: user.id,
             session_id: uuidv4(),
-            auth_token: session.access_token,
+            auth_token: session.access_token, // Add auth_token to satisfy NOT NULL constraint
             processed: false,
             created_at: new Date().toISOString(),
           };
@@ -218,7 +241,7 @@ const Insert = () => {
           console.log('Start command inserted:', data);
           setIsSensing(true);
           setSystemStatus('Scanning...');
-          setAlert({ type: 'success', message: isBusy ? 'Command queued.' : 'Sensing started.' });
+          setAlert({ type: 'success', message: 'Sensing started.' });
 
           let timeLeft = 60;
           setTimer(`Time Left: ${timeLeft}s`);
@@ -249,9 +272,8 @@ const Insert = () => {
         }
       }
     }, 500);
-  }, [user, isSensing, deviceId, checkExistingCommands]);
+  }, [user, isSensing, deviceId, checkExistingCommands, cleanupUserCommands]);
 
-  // Stop sensing
   const stopSensing = useCallback(async () => {
     if (commandDebounceRef.current) {
       clearTimeout(commandDebounceRef.current);
@@ -286,7 +308,7 @@ const Insert = () => {
           command: 'stop',
           user_id: user.id,
           session_id: uuidv4(),
-          auth_token: session.access_token, // Added auth_token
+          auth_token: session.access_token, // Add auth_token to satisfy NOT NULL constraint
           processed: false,
           created_at: new Date().toISOString(),
         };
@@ -303,16 +325,16 @@ const Insert = () => {
         }
 
         console.log('Stop command inserted:', data);
+        await cleanupUserCommands();
         setAlert({ type: 'success', message: 'Sensing stopped.' });
       } catch (error) {
         console.error('stopSensing error:', error);
         setAlert({ type: 'error', message: error.message });
-        setIsSensing(true); // Revert to sensing state on error
+        setIsSensing(true);
       }
     }, 500);
-  }, [user, deviceId]);
+  }, [user, deviceId, cleanupUserCommands]);
 
-  // Save user stats to Supabase
   const saveUserStats = useCallback(async () => {
     if (!user) {
       console.log('saveUserStats: No user authenticated.');
@@ -349,7 +371,6 @@ const Insert = () => {
     }
   }, [user, totalBottleCount, totalCanCount, totalPoints, totalMoney, bottleCount, canCount, pointsEarned, moneyEarned]);
 
-  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!user) {
@@ -369,10 +390,9 @@ const Insert = () => {
 
     setAlert({ type: 'success', message: 'Recyclables recorded!' });
     resetSensorData();
-    stopSensing();
+    await stopSensing();
   };
 
-  // Initialize authentication and fetch user stats
   useEffect(() => {
     const initializeAuth = async () => {
       console.log('Initializing authentication...');
@@ -445,7 +465,6 @@ const Insert = () => {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // Poll for recent recyclables
   useEffect(() => {
     if (!user || !isSensing) {
       console.log("Polling skipped: user=" + (user ? user.id : "null") + ", isSensing=" + isSensing);
@@ -459,7 +478,7 @@ const Insert = () => {
     };
 
     pollRecyclables();
-    pollRef.current = setInterval(pollRecyclables, 5000);
+    pollRef.current = setInterval(pollRecyclables, 2000);
 
     return () => {
       console.log("Stopping recyclables polling...");
@@ -540,7 +559,6 @@ const Insert = () => {
         </div>
 
         <div className="history-card">
-          <div className="stat-label">Recent Detections</div>
           <div className="stat-label">Recent Detections</div>
           {recentDetections.length > 0 ? (
             <ul>
