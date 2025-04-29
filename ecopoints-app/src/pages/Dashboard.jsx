@@ -50,28 +50,62 @@ const Dashboard = () => {
       const userId = session.user.id;
       console.log('Fetching stats for user ID:', userId);
 
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('name, points, money, bottles, cans')
-        .eq('id', userId)
+      // Fetch user stats from user_stats table (as in Insert.jsx)
+      const { data: statsData, error: statsError } = await supabase
+        .from('user_stats')
+        .select('total_bottle_count, total_can_count, total_points, total_money')
+        .eq('user_id', userId)
         .single();
 
-      if (userError) {
-        console.error('User fetch error:', userError);
-        throw new Error('Failed to fetch user data: ' + userError.message);
-      }
+      if (statsError) {
+        console.error('User stats fetch error:', statsError);
+        if (statsError.code === 'PGRST116') {
+          // No stats found, initialize them
+          const { error: insertError } = await supabase
+            .from('user_stats')
+            .insert({
+              user_id: userId,
+              total_bottle_count: 0,
+              total_can_count: 0,
+              total_points: 0,
+              total_money: 0,
+            });
+          if (insertError) {
+            console.error('Error initializing user stats:', insertError);
+            throw new Error('Failed to initialize user stats: ' + insertError.message);
+          }
+          // Set default stats
+          setStats({
+            name: session.user.user_metadata?.name || 'Guest',
+            points: 0,
+            money: 0,
+            bottles: 0,
+            cans: 0,
+          });
+        } else {
+          throw new Error('Failed to fetch user stats: ' + statsError.message);
+        }
+      } else {
+        const updatedStats = {
+          name: session.user.user_metadata?.name || 'Guest',
+          points: statsData.total_points || 0,
+          money: statsData.total_money || 0,
+          bottles: statsData.total_bottle_count || 0,
+          cans: statsData.total_can_count || 0,
+        };
 
-      if (!userData) {
-        throw new Error('User profile not found.');
-      }
+        localStorage.setItem('user', JSON.stringify({
+          id: userId,
+          email: session.user.email,
+          name: updatedStats.name,
+          points: updatedStats.points,
+          money: updatedStats.money,
+          bottles: updatedStats.bottles,
+          cans: updatedStats.cans,
+        }));
 
-      const updatedStats = {
-        name: userData.name || session.user.user_metadata?.name || 'Guest',
-        points: userData.points || 0,
-        money: userData.money || 0,
-        bottles: userData.bottles || 0,
-        cans: userData.cans || 0,
-      };
+        setStats(updatedStats);
+      }
 
       const { data: notificationData, error: notificationError } = await supabase
         .from('user_notifications')
@@ -85,17 +119,6 @@ const Dashboard = () => {
         throw new Error('Failed to fetch notifications: ' + notificationError.message);
       }
 
-      localStorage.setItem('user', JSON.stringify({
-        id: userId,
-        email: session.user.email,
-        name: updatedStats.name,
-        points: updatedStats.points,
-        money: updatedStats.money,
-        bottles: updatedStats.bottles,
-        cans: updatedStats.cans,
-      }));
-
-      setStats(updatedStats);
       setNotifications(notificationData || []);
       setError(null);
 
@@ -121,30 +144,31 @@ const Dashboard = () => {
       try {
         const userId = await fetchUserStats();
 
+        // Update subscription to listen to user_stats table instead of users
         userSubscription = supabase
-          .channel('public:users')
+          .channel('public:user_stats')
           .on(
             'postgres_changes',
             {
               event: 'UPDATE',
               schema: 'public',
-              table: 'users',
-              filter: `id=eq.${userId}`,
+              table: 'user_stats',
+              filter: `user_id=eq.${userId}`,
             },
             (payload) => {
-              console.log('Received real-time update for users:', payload);
-              const updatedUser = payload.new;
+              console.log('Received real-time update for user_stats:', payload);
+              const updatedStats = payload.new;
               const newStats = {
-                name: updatedUser.name || stats.name,
-                points: updatedUser.points || 0,
-                money: updatedUser.money || 0,
-                bottles: updatedUser.bottles || 0,
-                cans: updatedUser.cans || 0,
+                name: stats.name, // Name isn't in user_stats, preserve it
+                points: updatedStats.total_points || 0,
+                money: updatedStats.total_money || 0,
+                bottles: updatedStats.total_bottle_count || 0,
+                cans: updatedStats.total_can_count || 0,
               };
               setStats(newStats);
               localStorage.setItem('user', JSON.stringify({
                 id: userId,
-                email: updatedUser.email || localStorage.getItem('user')?.email,
+                email: localStorage.getItem('user')?.email,
                 ...newStats,
               }));
             }
@@ -184,7 +208,6 @@ const Dashboard = () => {
 
     setupSubscriptions();
 
-    // Listen for custom event from Redemption.jsx
     const handleBalanceUpdate = (event) => {
       console.log('Received userBalanceUpdated event:', event.detail);
       setStats((prev) => ({

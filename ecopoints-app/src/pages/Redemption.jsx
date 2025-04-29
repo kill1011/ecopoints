@@ -56,19 +56,42 @@ const Redemption = () => {
         throw new Error('No active session');
       }
 
-      const { data: userData, error } = await supabase
-        .from('users')
-        .select('points, money')
-        .eq('id', session.user.id)
+      // Fetch user data from user_stats table instead of users
+      const { data: statsData, error } = await supabase
+        .from('user_stats')
+        .select('total_points, total_money')
+        .eq('user_id', session.user.id)
         .single();
 
-      if (error) throw error;
-
-      if (!userData) {
-        throw new Error('User data not found');
+      if (error) {
+        console.error('User stats fetch error:', error);
+        if (error.code === 'PGRST116') {
+          // No stats found, initialize them
+          const { error: insertError } = await supabase
+            .from('user_stats')
+            .insert({
+              user_id: session.user.id,
+              total_bottle_count: 0,
+              total_can_count: 0,
+              total_points: 0,
+              total_money: 0,
+            });
+          if (insertError) {
+            console.error('Error initializing user stats:', insertError);
+            throw new Error('Failed to initialize user stats: ' + insertError.message);
+          }
+          // Set default stats
+          setUserData({ points: 0, money: 0 });
+        } else {
+          throw error;
+        }
+      } else {
+        setUserData({
+          points: statsData.total_points || 0,
+          money: statsData.total_money || 0,
+        });
       }
 
-      setUserData({ points: userData.points || 0, money: userData.money || 0 });
       setMessage('');
       setMessageType('');
 
@@ -127,36 +150,38 @@ const Redemption = () => {
 
       const pointsNeeded = calculatePointsNeeded(amount);
 
-      const { data: currentUser, error: userError } = await supabase
-        .from('users')
-        .select('points, money')
-        .eq('id', session.user.id)
+      // Fetch current user stats from user_stats table
+      const { data: currentStats, error: statsError } = await supabase
+        .from('user_stats')
+        .select('total_points, total_money')
+        .eq('user_id', session.user.id)
         .single();
 
-      if (userError) throw userError;
+      if (statsError) throw statsError;
 
-      if (pointsNeeded > currentUser.points) {
+      if (pointsNeeded > currentStats.total_points) {
         setMessage(`Insufficient points. You need ${pointsNeeded} points to redeem ₱${amount}`);
         setMessageType('error');
         return;
       }
 
-      const newMoney = currentUser.money - amount;
+      const newMoney = currentStats.total_money - amount;
       if (newMoney < 0) {
         setMessage(`Insufficient balance. You need ₱${amount} to redeem.`);
         setMessageType('error');
         return;
       }
 
-      const newPoints = currentUser.points - pointsNeeded;
+      const newPoints = currentStats.total_points - pointsNeeded;
 
+      // Update user_stats table instead of users
       const { error: updateError } = await supabase
-        .from('users')
+        .from('user_stats')
         .update({ 
-          points: newPoints,
-          money: newMoney
+          total_points: newPoints,
+          total_money: newMoney
         })
-        .eq('id', session.user.id);
+        .eq('user_id', session.user.id);
 
       if (updateError) throw updateError;
 

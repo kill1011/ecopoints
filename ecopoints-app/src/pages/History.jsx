@@ -4,7 +4,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faHistory, 
   faExchangeAlt, 
-  faSearch 
+  faSearch,
+  faRecycle
 } from '@fortawesome/free-solid-svg-icons';
 import { supabase } from '../config/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -31,7 +32,7 @@ const History = () => {
         throw new Error('Authentication required');
       }
 
-      // Get redemption requests only
+      // Fetch redemption requests
       const { data: redemptionData, error: redemptionError } = await supabase
         .from('redemption_requests')
         .select('*')
@@ -54,12 +55,45 @@ const History = () => {
         processed_at: item.processed_at
       }));
 
-      setTransactions(redemptions);
+      // Fetch recycling transactions from recyclables table
+      const { data: recyclingData, error: recyclingError } = await supabase
+        .from('recyclables')
+        .select('id, material, quantity, created_at')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (recyclingError) {
+        console.error("Recycling error details:", recyclingError);
+        throw recyclingError;
+      }
+
+      // Transform recycling transactions
+      const recyclables = (recyclingData || []).map(item => {
+        // Calculate points based on material (logic from Insert.jsx)
+        const points = item.material === 'PLASTIC_BOTTLE' ? item.quantity * 3 : item.quantity * 5;
+        const money = points / 100; // 100 points = 1 peso
+        return {
+          id: item.id,
+          type: 'recycle',
+          date: item.created_at,
+          amount: money,
+          points: points,
+          status: 'completed', // Recycling transactions are immediately completed
+          processed_at: item.created_at
+        };
+      });
+
+      // Combine and sort transactions by date (descending)
+      const allTransactions = [...redemptions, ...recyclables].sort((a, b) => 
+        new Date(b.date) - new Date(a.date)
+      );
+
+      setTransactions(allTransactions);
       setError('');
 
     } catch (error) {
       console.error('Error fetching history:', error);
-      setError('Failed to load redemption history: ' + error.message);
+      setError('Failed to load transaction history: ' + error.message);
       setTransactions([]);
       
       if (error.message.includes('Authentication')) {
@@ -79,24 +113,25 @@ const History = () => {
       case 'approved': return 'status-approved';
       case 'rejected': return 'status-rejected';
       case 'pending': return 'status-pending';
+      case 'completed': return 'status-approved'; // For recycling transactions
       default: return '';
     }
   };
 
   return (
-    <Layout title="Redemption History">
+    <Layout title="Transaction History">
       <div className="history-page">
         <div className="history-header">
           <div className="header-content">
             <h1>
               <FontAwesomeIcon icon={faHistory} className="header-icon" />
-              Redemption History
+              Transaction History
             </h1>
             <div className="search-bar">
               <FontAwesomeIcon icon={faSearch} className="search-icon" />
               <input
                 type="text"
-                placeholder="Search redemption transactions..."
+                placeholder="Search transactions..."
                 onChange={(e) => {/* Add search functionality later */}}
               />
             </div>
@@ -106,7 +141,7 @@ const History = () => {
         {loading ? (
           <div className="loading-state">
             <div className="loader"></div>
-            <p>Loading your redemption history...</p>
+            <p>Loading your transaction history...</p>
           </div>
         ) : error ? (
           <div className="error-state">
@@ -119,8 +154,8 @@ const History = () => {
         ) : transactions.length === 0 ? (
           <div className="empty-state">
             <FontAwesomeIcon icon={faHistory} className="empty-icon" />
-            <h2>No Redemption Transactions Yet</h2>
-            <p>Your redemption history will appear here</p>
+            <h2>No Transactions Yet</h2>
+            <p>Your transaction history will appear here</p>
           </div>
         ) : (
           <div className="history-content">
@@ -131,7 +166,7 @@ const History = () => {
                     <th>Date</th>
                     <th>Type</th>
                     <th>Amount (₱)</th>
-                    <th>Points Used</th>
+                    <th>Points</th>
                     <th>Status</th>
                     <th>Processed At</th>
                   </tr>
@@ -143,7 +178,7 @@ const History = () => {
                       <td>
                         <span className="transaction-type">
                           <FontAwesomeIcon 
-                            icon={faExchangeAlt} 
+                            icon={transaction.type === 'redemption' ? faExchangeAlt : faRecycle} 
                             className="type-icon" 
                           />
                           {transaction.type}
@@ -151,7 +186,7 @@ const History = () => {
                       </td>
                       <td>₱{transaction.amount?.toFixed(2) || '0.00'}</td>
                       <td className="points-cell">
-                        {transaction.points?.toFixed(2) || '0.00'}
+                        {transaction.points?.toLocaleString() || '0'}
                       </td>
                       <td>
                         <span className={`status ${getStatusClass(transaction.status)}`}>
