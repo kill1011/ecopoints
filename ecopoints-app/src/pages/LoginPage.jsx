@@ -22,30 +22,86 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
+      // Trim and validate inputs
+      const email = formData.email.trim();
+      const password = formData.password.trim();
+      const name = formData.name.trim();
+
+      if (!email || !password) {
+        throw new Error('Email and password are required');
+      }
+
+      if (!isLogin && !name) {
+        throw new Error('Name is required for signup');
+      }
+
       if (isLogin) {
         // Handle login
         const { data, error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
-          password: formData.password,
+          email,
+          password,
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.status === 400 && error.message.includes('invalid credentials')) {
+            throw new Error('Invalid email or password. Please try again.');
+          }
+          if (error.message.includes('email not confirmed')) {
+            throw new Error('Please verify your email before logging in.');
+          }
+          throw new Error(error.message || 'Failed to sign in. Please try again.');
+        }
+
+        if (!data.user) {
+          throw new Error('No user data returned after authentication');
+        }
 
         // Get user profile from users table
         const { data: profile, error: profileError } = await supabase
           .from('users')
-          .select('id, email, name, is_admin, points, money, bottles, cans')
+          .select('id, email, name, is_admin')
           .eq('id', data.user.id)
           .single();
 
-        if (profileError) throw profileError;
-        if (!profile) throw new Error('User profile not found');
+        if (profileError) {
+          console.error('Profile fetch error:', profileError);
+          throw new Error('Failed to fetch user profile: ' + profileError.message);
+        }
 
-        console.log('Login successful, user profile:', profile);
+        if (!profile) {
+          throw new Error('User profile not found in users table');
+        }
+
+        // Fetch user stats from user_stats table
+        const { data: stats, error: statsError } = await supabase
+          .from('user_stats')
+          .select('total_points, total_money, total_bottle_count, total_can_count')
+          .eq('user_id', data.user.id)
+          .single();
+
+        if (statsError) {
+          console.error('Stats fetch error:', statsError);
+          if (statsError.code !== 'PGRST116') {
+            throw new Error('Failed to fetch user stats: ' + statsError.message);
+          }
+        }
+
+        const userProfile = {
+          id: profile.id,
+          email: profile.email,
+          name: profile.name || 'Unknown',
+          is_admin: profile.is_admin || false,
+          points: stats?.total_points || 0,
+          money: stats?.total_money || 0,
+          bottles: stats?.total_bottle_count || 0,
+          cans: stats?.total_can_count || 0,
+        };
+
+        console.log('Login successful, user profile:', userProfile);
 
         // Store user data in localStorage
         localStorage.setItem('token', data.session.access_token);
-        localStorage.setItem('user', JSON.stringify(profile));
+        localStorage.setItem('user', JSON.stringify(userProfile));
         localStorage.setItem('user_id', profile.id);
         localStorage.setItem('is_admin', profile.is_admin.toString());
 
@@ -59,58 +115,82 @@ const LoginPage = () => {
         }
       } else {
         // Handle signup
-        // Check if the email is already registered in auth.users
-        const { data: existingAuthUser, error: authError } = await supabase
-          .rpc('check_user_exists', { email_input: formData.email });
-
-        if (authError) throw authError;
-        if (existingAuthUser) throw new Error('User already registered');
-
-        // Proceed with signup
+        // Proceed with signup directly (removed check_user_exists RPC call)
         const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
+          email,
+          password,
           options: {
-            data: { name: formData.name },
+            data: { name },
           },
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('already registered')) {
+            throw new Error('This email is already registered. Please sign in instead.');
+          }
+          if (error.message.includes('email not confirmed')) {
+            throw new Error('Please verify your email after signing up.');
+          }
+          throw new Error(error.message || 'Failed to sign up. Please try again.');
+        }
 
-        // Check if this is an admin email (consider moving to backend)
-        const isAdmin = formData.email.endsWith('PCCECOPOINTS@ecopoints.com');
+        if (!data.user) {
+          throw new Error('No user data returned after signup');
+        }
 
-        // Create user profile with all fields
+        // Check if this is an admin email
+        const isAdmin = email.endsWith('PCCECOPOINTS@ecopoints.com');
+
+        // Create user profile in users table
         const { error: profileError } = await supabase
           .from('users')
           .insert([
             {
               id: data.user.id,
-              email: formData.email,
-              name: formData.name,
-              points: 0,
-              money: 0,
-              bottles: 0,
-              cans: 0,
+              email,
+              name,
               is_admin: isAdmin,
             },
           ]);
 
-        if (profileError) throw profileError;
+        if (profileError) {
+          console.error('Profile insert error:', profileError);
+          throw new Error('Failed to create user profile: ' + profileError.message);
+        }
+
+        // Initialize user stats in user_stats table
+        const { error: statsError } = await supabase
+          .from('user_stats')
+          .insert([
+            {
+              user_id: data.user.id,
+              total_points: 0,
+              total_money: 0,
+              total_bottle_count: 0,
+              total_can_count: 0,
+            },
+          ]);
+
+        if (statsError) {
+          console.error('Stats insert error:', statsError);
+          throw new Error('Failed to initialize user stats: ' + statsError.message);
+        }
 
         // Handle email confirmation case
         if (data.session) {
-          localStorage.setItem('token', data.session.access_token);
-          localStorage.setItem('user', JSON.stringify({
+          const userProfile = {
             id: data.user.id,
-            email: formData.email,
-            name: formData.name,
+            email,
+            name,
             is_admin: isAdmin,
             points: 0,
             money: 0,
             bottles: 0,
             cans: 0,
-          }));
+          };
+
+          localStorage.setItem('token', data.session.access_token);
+          localStorage.setItem('user', JSON.stringify(userProfile));
           localStorage.setItem('user_id', data.user.id);
           localStorage.setItem('is_admin', isAdmin.toString());
 
@@ -127,7 +207,7 @@ const LoginPage = () => {
       }
     } catch (error) {
       console.error('Authentication error:', error);
-      setError(error.message || 'Authentication failed');
+      setError(error.message || 'An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
