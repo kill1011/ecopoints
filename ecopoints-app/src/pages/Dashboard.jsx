@@ -67,10 +67,10 @@ const Dashboard = () => {
         recyclablesData.forEach(record => {
           if (record.material === 'PLASTIC_BOTTLE') {
             totalBottles += record.quantity;
-            totalPoints += record.quantity * 2; // 2 points per bottle
+            totalPoints += record.quantity * 3; // Updated: 3 points per bottle
           } else if (record.material === 'CAN') {
             totalCans += record.quantity;
-            totalPoints += record.quantity * 3; // 3 points per can
+            totalPoints += record.quantity * 5; // Updated: 5 points per can
           }
         });
 

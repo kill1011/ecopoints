@@ -41,12 +41,7 @@ const AdminSidebar = ({ isOpen }) => {
               <span>History</span>
             </Link>
           </li>
-          <li className={location.pathname === '/admin/settings' ? 'active' : ''}>
-            <Link to="/admin/settings">
-              <FontAwesomeIcon icon={faCog} />
-              <span>Settings</span>
-            </Link>
-          </li>
+
           <li>
             <button onClick={handleLogout} className="logout-button">
               <FontAwesomeIcon icon={faSignOutAlt} />

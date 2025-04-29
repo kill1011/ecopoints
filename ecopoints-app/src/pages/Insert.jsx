@@ -51,8 +51,8 @@ const Insert = () => {
   }, []);
 
   const updateEarnings = useCallback((bottleCount, canCount) => {
-    const points = bottleCount * 2 + canCount * 3;
-    const money = (bottleCount * 0.5 + canCount * 0.5).toFixed(2);
+    const points = bottleCount * 3 + canCount * 5; // Updated: 3 points per bottle, 5 points per can
+    const money = (points / 100).toFixed(2); // 100 points = 1 peso
     setPointsEarned(points);
     setMoneyEarned(money);
     return { points, money };
