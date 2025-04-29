@@ -1,216 +1,350 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Header from '../components/Header';
+import Sidebar from '../components/AdminSidebar';
 import { supabase } from '../config/supabase';
+import '../styles/AdminApproval.css';
 
 const AdminApproval = () => {
   const navigate = useNavigate();
-  const [requests, setRequests] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
-  useEffect(() => {
-    const fetchRequests = async () => {
-      try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session) {
-          navigate('/login');
-          return;
+  const fetchPendingRequests = async () => {
+    try {
+      setLoading(true);
+      console.log('Fetching pending requests...');
+
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        console.log('No active session, attempting to refresh...');
+        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !refreshData.session) {
+          console.error('Session refresh error:', refreshError);
+          throw new Error('Unable to refresh session');
+        }
+        session = refreshData.session;
+      }
+
+      console.log('Session in fetchPendingRequests:', session);
+
+      const { data: requests, error: requestsError } = await supabase
+        .from('redemption_requests')
+        .select('*')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (requestsError) throw requestsError;
+
+      if (!requests || requests.length === 0) {
+        console.log('No pending requests found in the database');
+      }
+
+      const transformedRequests = await Promise.all(requests.map(async (request) => {
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('name, money')
+          .eq('id', request.user_id)
+          .single();
+
+        if (userError) {
+          console.error('User fetch error for user_id', request.user_id, ':', userError);
+          return {
+            ...request,
+            user_name: 'Unknown',
+            user_balance: 0
+          };
         }
 
-        // Check if user is admin
+        return {
+          ...request,
+          user_name: userData?.name || 'Unknown',
+          user_balance: userData?.money || 0
+        };
+      }));
+
+      console.log('Fetched requests:', transformedRequests);
+      setPendingRequests(transformedRequests);
+      setMessage('');
+      setMessageType('');
+
+    } catch (error) {
+      console.error('Fetch error:', error);
+      setMessage(`Failed to fetch pending requests: ${error.message}`);
+      setMessageType('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        let { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          throw sessionError;
+        }
+
+        if (!session) {
+          console.log('No active session, attempting to refresh...');
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError || !refreshData.session) {
+            console.error('Session refresh error:', refreshError);
+            navigate('/login');
+            return;
+          }
+          session = refreshData.session;
+        }
+
+        console.log('Session in checkAuth:', session);
+
         const { data: userData, error: userError } = await supabase
           .from('users')
           .select('is_admin')
           .eq('id', session.user.id)
           .single();
 
-        if (userError || !userData.is_admin) {
+        if (userError) {
+          console.error('User fetch error:', userError);
+          throw userError;
+        }
+
+        if (!userData?.is_admin) {
+          console.log('User is not an admin, redirecting to dashboard...');
           navigate('/dashboard');
           return;
         }
 
-        // Fetch pending redemption requests
-        const { data: redemptionData, error: redemptionError } = await supabase
-          .from('redemption_requests')
-          .select('*, users(name)')
-          .eq('status', 'pending')
-          .order('created_at', { ascending: false });
+        localStorage.setItem('is_admin', 'true');
+        
+        await fetchPendingRequests();
+        const notificationInterval = setInterval(checkNewNotifications, 10000);
+        return () => clearInterval(notificationInterval);
 
-        if (redemptionError) {
-          throw new Error('Failed to fetch redemption requests: ' + redemptionError.message);
-        }
-
-        setRequests(redemptionData || []);
-        setLoading(false);
       } catch (error) {
-        setError(error.message);
-        setLoading(false);
+        console.error('Auth check failed:', error);
+        navigate('/login');
       }
     };
 
-    fetchRequests();
+    checkAuth();
   }, [navigate]);
 
-  const handleApprove = async (requestId, userId, amount, points) => {
+  const checkNewNotifications = async () => {
     try {
-      // Update redemption request status to approved
-      const { error: updateError } = await supabase
-        .from('redemption_requests')
-        .update({ status: 'approved' })
-        .eq('id', requestId);
-
-      if (updateError) {
-        throw new Error('Failed to approve redemption request: ' + updateError.message);
-      }
-
-      // Fetch the user's current balance (if not already deducted)
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('points, money')
-        .eq('id', userId)
-        .single();
-
-      if (userError) {
-        throw new Error('Failed to fetch user data: ' + userError.message);
-      }
-
-      // If the deduction was already made in Redemption.jsx, we can skip this step.
-      // Otherwise, deduct the amount here (uncomment if needed):
-      /*
-      const newMoney = userData.money - amount;
-      const newPoints = userData.points - points;
-
-      const { error: updateUserError } = await supabase
-        .from('users')
-        .update({ points: newPoints, money: newMoney })
-        .eq('id', userId);
-
-      if (updateUserError) {
-        throw new Error('Failed to update user balance: ' + updateUserError.message);
-      }
-      */
-
-      // Create a notification for the user
-      const { error: notificationError } = await supabase
-        .from('user_notifications')
-        .insert({
-          user_id: userId,
-          type: 'redemption_approved',
-          message: `Your redemption request for ₱${amount.toFixed(2)} has been approved!`,
-          status: 'unread',
-          created_at: new Date().toISOString(),
-        });
-
-      if (notificationError) {
-        throw new Error('Failed to send user notification: ' + notificationError.message);
-      }
-
-      // Update the admin notification status (if linked)
-      await supabase
+      const { data, error } = await supabase
         .from('admin_notifications')
-        .update({ status: 'read' })
-        .eq('request_id', requestId)
-        .eq('type', 'redemption_request');
+        .select('*')
+        .eq('status', 'unread')
+        .order('created_at', { ascending: false });
 
-      // Refresh the requests list
-      setRequests(requests.filter((req) => req.id !== requestId));
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        setNotifications(data);
+        data.forEach(notification => {
+          if (Notification.permission === 'granted') {
+            new Notification('New Redemption Request', {
+              body: notification.message
+            });
+          }
+        });
+      }
     } catch (error) {
-      setError(error.message);
+      console.error('Error checking notifications:', error);
     }
   };
 
-  const handleReject = async (requestId, userId, amount, points) => {
+  const handleApproval = async (requestId, isApproved) => {
     try {
-      // Update redemption request status to rejected
-      const { error: updateError } = await supabase
+      setLoading(true);
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No active session');
+
+      const { data: request, error: requestError } = await supabase
         .from('redemption_requests')
-        .update({ status: 'rejected' })
-        .eq('id', requestId);
-
-      if (updateError) {
-        throw new Error('Failed to reject redemption request: ' + updateError.message);
-      }
-
-      // Since the points and money were already deducted in Redemption.jsx,
-      // we need to restore them upon rejection
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('points, money')
-        .eq('id', userId)
+        .select('*')
+        .eq('id', requestId)
         .single();
 
-      if (userError) {
-        throw new Error('Failed to fetch user data: ' + userError.message);
+      if (requestError) {
+        console.error('Request fetch error:', requestError);
+        throw new Error('Failed to fetch request details');
       }
 
-      const restoredPoints = userData.points + points;
-      const restoredMoney = userData.money + amount;
+      if (!request) {
+        throw new Error('Redemption request not found');
+      }
 
-      const { error: updateUserError } = await supabase
+      const { data: userData, error: userError } = await supabase
         .from('users')
-        .update({ points: restoredPoints, money: restoredMoney })
-        .eq('id', userId);
+        .select('name, money')
+        .eq('id', request.user_id)
+        .single();
 
-      if (updateUserError) {
-        throw new Error('Failed to restore user balance: ' + updateUserError.message);
+      let userBalance = 0;
+      if (userError) {
+        console.error('User fetch error for user_id', request.user_id, ':', userError);
+        if (userError.code === 'PGRST116') {
+          console.warn(`User with id ${request.user_id} not found in users table. Proceeding with default balance of 0.`);
+        } else {
+          throw new Error('Failed to fetch user details: ' + userError.message);
+        }
+      } else {
+        userBalance = userData?.money || 0;
       }
 
-      // Create a notification for the user
-      const { error: notificationError } = await supabase
-        .from('user_notifications')
-        .insert({
-          user_id: userId,
-          type: 'redemption_rejected',
-          message: `Your redemption request for ₱${amount.toFixed(2)} has been rejected.`,
-          status: 'unread',
-          created_at: new Date().toISOString(),
-        });
+      const { error: updateError } = await supabase
+        .from('redemption_requests')
+        .update({ 
+          status: isApproved ? 'approved' : 'rejected',
+          processed_by: session.user.id,
+          processed_at: new Date().toISOString()
+        })
+        .eq('id', requestId);
 
-      if (notificationError) {
-        throw new Error('Failed to send user notification: ' + notificationError.message);
+      if (updateError) throw updateError;
+
+      if (isApproved && userData) {
+        const { error: balanceError } = await supabase
+          .from('users')
+          .update({ 
+            money: userBalance + request.amount
+          })
+          .eq('id', request.user_id);
+
+        if (balanceError) throw balanceError;
+      } else if (isApproved && !userData) {
+        console.warn(`Skipping balance update for user_id ${request.user_id} because user not found.`);
       }
 
-      // Update the admin notification status (if linked)
+      if (userData) {
+        const { error: notificationError } = await supabase
+          .from('user_notifications')
+          .insert({
+            user_id: request.user_id,
+            type: isApproved ? 'redemption_approved' : 'redemption_rejected',
+            message: `Your redemption request for ₱${request.amount.toFixed(2)} has been ${isApproved ? 'approved' : 'rejected'}.`,
+            status: 'unread',
+            created_at: new Date().toISOString()
+          });
+
+        if (notificationError) {
+          console.error('Failed to create user notification:', notificationError);
+        }
+      } else {
+        console.warn(`Skipping user notification for user_id ${request.user_id} because user not found.`);
+      }
+
       await supabase
         .from('admin_notifications')
         .update({ status: 'read' })
-        .eq('request_id', requestId)
-        .eq('type', 'redemption_request');
+        .eq('request_id', requestId);
 
-      // Refresh the requests list
-      setRequests(requests.filter((req) => req.id !== requestId));
+      setPendingRequests(current => 
+        current.filter(req => req.id !== requestId)
+      );
+
+      setMessage(`Redemption request ${isApproved ? 'approved' : 'rejected'} successfully`);
+      setMessageType('success');
+
+      setNotifications(current => 
+        current.filter(notif => notif.request_id !== requestId)
+      );
+
     } catch (error) {
-      setError(error.message);
+      console.error('Approval error:', error);
+      setMessage(error.message || `Failed to ${isApproved ? 'approve' : 'reject'} redemption`);
+      setMessageType('error');
+    } finally {
+      setLoading(false);
     }
   };
-
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error}</div>;
 
   return (
-    <div>
-      <h1>Admin Approval</h1>
-      {requests.length === 0 ? (
-        <p>No pending redemption requests.</p>
-      ) : (
-        <div>
-          {requests.map((request) => (
-            <div key={request.id} className="request-item">
-              <p>User: {request.users.name}</p>
-              <p>Amount: ₱{request.amount.toFixed(2)}</p>
-              <p>Points: {request.points}</p>
-              <p>Status: {request.status}</p>
-              <p>Requested: {new Date(request.created_at).toLocaleString()}</p>
-              <button onClick={() => handleApprove(request.id, request.user_id, request.amount, request.points)}>
-                Approve
-              </button>
-              <button onClick={() => handleReject(request.id, request.user_id, request.amount, request.points)}>
-                Reject
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="app-container">
+      <Header 
+        userName={localStorage.getItem('user_name')}
+        toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
+      <Sidebar isOpen={isSidebarOpen} />
+      
+      <div className="admin-approval-container">
+        {notifications.length > 0 && (
+          <div className="notifications-panel">
+            <h3>New Requests</h3>
+            {notifications.map(notification => (
+              <div key={notification.id} className="notification-item">
+                {notification.message}
+                <span className="notification-time">
+                  {new Date(notification.created_at).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <h1>Pending Redemption Requests</h1>
+
+        {message && (
+          <div className={`message ${messageType}`}>
+            {message}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="loading">Loading requests...</div>
+        ) : pendingRequests.length === 0 ? (
+          <div className="empty-state">No pending redemption requests</div>
+        ) : (
+          <div className="requests-table-container">
+            <table className="requests-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Amount (₱)</th>
+                  <th>Current Balance</th>
+                  <th>Request Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingRequests.map((request) => (
+                  <tr key={request.id}>
+                    <td>{request.user_name}</td>
+                    <td>₱{request.amount.toFixed(2)}</td>
+                    <td>₱{request.user_balance.toFixed(2)}</td>
+                    <td>{new Date(request.created_at).toLocaleDateString()}</td>
+                    <td className="actions">
+                      <button
+                        className="approve-btn"
+                        onClick={() => handleApproval(request.id, true)}
+                        disabled={loading}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="reject-btn"
+                        onClick={() => handleApproval(request.id, false)}
+                        disabled={loading}
+                      >
+                        Reject
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

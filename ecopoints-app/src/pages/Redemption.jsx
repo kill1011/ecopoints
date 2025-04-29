@@ -125,10 +125,8 @@ const Redemption = () => {
         return;
       }
 
-      // Calculate points needed for redemption
       const pointsNeeded = calculatePointsNeeded(amount);
 
-      // Get current user data
       const { data: currentUser, error: userError } = await supabase
         .from('users')
         .select('points, money')
@@ -137,7 +135,6 @@ const Redemption = () => {
 
       if (userError) throw userError;
 
-      // Validate points and money
       if (pointsNeeded > currentUser.points) {
         setMessage(`Insufficient points. You need ${pointsNeeded} points to redeem ₱${amount}`);
         setMessageType('error');
@@ -151,10 +148,8 @@ const Redemption = () => {
         return;
       }
 
-      // Calculate new points and money balance
       const newPoints = currentUser.points - pointsNeeded;
 
-      // Update user's points and money
       const { error: updateError } = await supabase
         .from('users')
         .update({ 
@@ -165,7 +160,6 @@ const Redemption = () => {
 
       if (updateError) throw updateError;
 
-      // Create redemption request
       const { data: redemption, error: redemptionError } = await supabase
         .from('redemption_requests')
         .insert({
@@ -180,7 +174,6 @@ const Redemption = () => {
 
       if (redemptionError) throw redemptionError;
 
-      // Create admin notification
       await supabase
         .from('admin_notifications')
         .insert({
@@ -196,8 +189,19 @@ const Redemption = () => {
       setMessage('Redemption request sent! Waiting for admin approval.');
       setMessageType('success');
       setRedeemAmount('');
-      
-      // Refresh user data and pending redemptions
+
+      // Update localStorage to reflect the new balance immediately
+      localStorage.setItem('user', JSON.stringify({
+        ...JSON.parse(localStorage.getItem('user') || '{}'),
+        points: newPoints,
+        money: newMoney,
+      }));
+
+      // Dispatch a custom event to notify other components (e.g., Dashboard) of the update
+      window.dispatchEvent(new CustomEvent('userBalanceUpdated', {
+        detail: { points: newPoints, money: newMoney }
+      }));
+
       await Promise.all([
         fetchUserData(),
         fetchPendingRedemptions()
@@ -207,7 +211,7 @@ const Redemption = () => {
       console.error('Redemption Error:', error);
       setMessage(error.message || 'Failed to submit redemption request');
       setMessageType('error');
-      await fetchUserData(); // Refresh data on error
+      await fetchUserData();
     } finally {
       setLoading(false);
     }
