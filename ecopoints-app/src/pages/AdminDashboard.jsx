@@ -34,16 +34,13 @@ const AdminDashboard = () => {
 
   const fetchUsers = async () => {
     try {
+      // Fetch user metadata from users table
       const { data: usersData, error: usersError } = await supabase
         .from('users')
         .select(`
           id,
           name,
           email,
-          points,
-          money,
-          bottles,
-          cans,
           is_admin,
           created_at
         `)
@@ -54,7 +51,33 @@ const AdminDashboard = () => {
         throw new Error('Failed to fetch users data');
       }
 
-      return usersData || [];
+      // Fetch user stats from user_stats table
+      const { data: statsData, error: statsError } = await supabase
+        .from('user_stats')
+        .select('user_id, total_points, total_money, total_bottle_count, total_can_count');
+
+      if (statsError) {
+        console.error('User stats fetch error:', statsError);
+        throw new Error('Failed to fetch user stats');
+      }
+
+      // Combine user metadata with stats
+      const combinedUsers = usersData.map(user => {
+        const userStats = statsData.find(stats => stats.user_id === user.id) || {};
+        return {
+          id: user.id,
+          name: user.name || 'Unknown',
+          email: user.email || 'N/A',
+          points: userStats.total_points || 0,
+          money: userStats.total_money || 0,
+          bottles: userStats.total_bottle_count || 0,
+          cans: userStats.total_can_count || 0,
+          is_admin: user.is_admin || false,
+          created_at: user.created_at
+        };
+      });
+
+      return combinedUsers;
     } catch (error) {
       throw error;
     }
@@ -64,7 +87,8 @@ const AdminDashboard = () => {
     try {
       const totalUsers = usersData.length;
       const totalPoints = usersData.reduce((acc, user) => acc + (user.points || 0), 0);
-      
+      const totalRecyclables = usersData.reduce((acc, user) => acc + (user.bottles || 0) + (user.cans || 0), 0);
+
       // Get all approved redemptions
       const { data: redemptions, error: redemptionError } = await supabase
         .from('redemption_requests')
@@ -75,13 +99,11 @@ const AdminDashboard = () => {
 
       // Calculate total money redeemed
       const totalMoneyRedeemed = redemptions?.reduce((acc, redemption) => acc + (redemption.amount || 0), 0) || 0;
-      
-      const totalRecyclables = usersData.reduce((acc, user) => acc + (user.bottles || 0) + (user.cans || 0), 0);
 
       setStats({
         totalUsers,
         totalPoints,
-        totalMoney: totalMoneyRedeemed, // Update to show total redeemed money
+        totalMoney: totalMoneyRedeemed,
         totalRecyclables
       });
     } catch (error) {
@@ -270,7 +292,7 @@ const AdminDashboard = () => {
               <h2>Recent Users</h2>
               <button 
                 className="view-all-btn"
-                onClick={() => navigate('/admin/viewall')} // Update this line to match ViewAll component route
+                onClick={() => navigate('/admin/viewall')} 
               >
                 View All
               </button>
@@ -300,7 +322,10 @@ const AdminDashboard = () => {
                         <td>{user.name}</td>
                         <td>{user.email}</td>
                         <td>{user.points?.toLocaleString() || 0}</td>
-                        <td>₱{user.money?.toLocaleString() || 0}</td>
+                        <td>₱{user.money?.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }) || 0}</td>
                         <td>{new Date(user.created_at).toLocaleDateString()}</td>
                         <td>
                           <span className={`status ${user.is_admin ? 'admin' : 'user'}`}>
