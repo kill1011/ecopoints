@@ -516,7 +516,7 @@ const Insert = () => {
                 onClick={startSensing}
                 disabled={isSensing || !user}
               >
-                <FontAwesomeIcon icon={faPlay} /> Start Sensing
+                <FontAwesomeIcon icon={faPlay} /> Scan Recyclables
               </button>
               <button
                 type="button"
@@ -540,37 +540,6 @@ const Insert = () => {
             </button>
             <div className="timer-display">{timer}</div>
           </form>
-        </div>
-
-        <div className="preview-card">
-          <div className="stat-label">Earnings Preview</div>
-          <div className="stat-value">{pointsEarned}</div>
-          <div className="stat-label">Points</div>
-          <div className="stat-value">₱{moneyEarned}</div>
-          <div className="stat-label">Money</div>
-        </div>
-
-        <div className="stats-card">
-          <div className="stat-label">Total Statistics</div>
-          <div className="stat-label">Total Plastic Bottles: {totalBottleCount}</div>
-          <div className="stat-label">Total Cans: {totalCanCount}</div>
-          <div className="stat-label">Total Points: {totalPoints}</div>
-          <div className="stat-label">Total Money: ₱{totalMoney}</div>
-        </div>
-
-        <div className="history-card">
-          <div className="stat-label">Recent Detections</div>
-          {recentDetections.length > 0 ? (
-            <ul>
-              {recentDetections.map((detection, index) => (
-                <li key={index}>
-                  {detection.material} (Qty: {detection.quantity}) at {new Date(detection.created_at).toLocaleTimeString()}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No recent detections.</p>
-          )}
         </div>
       </div>
     </Layout>

@@ -30,80 +30,54 @@ const Dashboard = () => {
     return 'Good Evening';
   };
 
-  const calculateMoneyFromPoints = (points) => {
-    return points / 100; // 100 points = 1 peso
-  };
-
   useEffect(() => {
+    let subscription;
+
     const fetchUserStats = async () => {
       try {
         // Get current session
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        let { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
-        if (sessionError || !session) {
-          setError('Authentication required. Please log in again.');
-          localStorage.clear();
-          navigate('/login');
-          return;
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          throw new Error('Authentication required: ' + sessionError.message);
+        }
+
+        if (!session) {
+          console.log('No active session, attempting to refresh...');
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError || !refreshData.session) {
+            console.error('Session refresh error:', refreshError);
+            throw new Error('Unable to refresh session');
+          }
+          session = refreshData.session;
         }
 
         const userId = session.user.id;
 
-        // Aggregate data from recyclables table
-        const { data: recyclablesData, error: recyclablesError } = await supabase
-          .from('recyclables')
-          .select('material, quantity')
-          .eq('user_id', userId);
-
-        if (recyclablesError) {
-          console.error('Recyclables fetch error:', recyclablesError);
-          throw new Error('Failed to fetch recyclables: ' + recyclablesError.message);
-        }
-
-        let totalPoints = 0;
-        let totalBottles = 0;
-        let totalCans = 0;
-
-        recyclablesData.forEach(record => {
-          if (record.material === 'PLASTIC_BOTTLE') {
-            totalBottles += record.quantity;
-            totalPoints += record.quantity * 3; // Updated: 3 points per bottle
-          } else if (record.material === 'CAN') {
-            totalCans += record.quantity;
-            totalPoints += record.quantity * 5; // Updated: 5 points per can
-          }
-        });
-
-        const calculatedMoney = calculateMoneyFromPoints(totalPoints);
-
-        const updatedStats = {
-          name: session.user.user_metadata?.name || 'Guest',
-          points: totalPoints,
-          money: calculatedMoney,
-          bottles: totalBottles,
-          cans: totalCans,
-        };
-
-        // Update users table
-        const { data: userData, error: upsertError } = await supabase
+        // Fetch user data directly from the users table
+        const { data: userData, error: userError } = await supabase
           .from('users')
-          .upsert([{
-            id: userId,
-            name: updatedStats.name,
-            email: session.user.email,
-            points: updatedStats.points,
-            bottles: updatedStats.bottles,
-            cans: updatedStats.cans,
-            money: updatedStats.money,
-            is_admin: false,
-          }], { onConflict: 'id' })
-          .select()
+          .select('name, points, money, bottles, cans')
+          .eq('id', userId)
           .single();
 
-        if (upsertError) {
-          console.error('Profile upsert error:', upsertError);
-          throw new Error('Failed to update user profile: ' + upsertError.message);
+        if (userError) {
+          console.error('User fetch error:', userError);
+          throw new Error('Failed to fetch user data: ' + userError.message);
         }
+
+        if (!userData) {
+          throw new Error('User profile not found.');
+        }
+
+        const updatedStats = {
+          name: userData.name || session.user.user_metadata?.name || 'Guest',
+          points: userData.points || 0,
+          money: userData.money || 0,
+          bottles: userData.bottles || 0,
+          cans: userData.cans || 0,
+        };
 
         // Update localStorage
         localStorage.setItem('user', JSON.stringify({
@@ -114,20 +88,60 @@ const Dashboard = () => {
           money: updatedStats.money,
           bottles: updatedStats.bottles,
           cans: updatedStats.cans,
-          is_admin: JSON.parse(localStorage.getItem('is_admin') || 'false'),
         }));
 
         setStats(updatedStats);
         setError(null);
+
+        // Set up real-time subscription for user updates
+        subscription = supabase
+          .channel('public:users')
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'users',
+              filter: `id=eq.${userId}`,
+            },
+            (payload) => {
+              const updatedUser = payload.new;
+              const newStats = {
+                name: updatedUser.name || stats.name,
+                points: updatedUser.points || 0,
+                money: updatedUser.money || 0,
+                bottles: updatedUser.bottles || 0,
+                cans: updatedUser.cans || 0,
+              };
+              setStats(newStats);
+              localStorage.setItem('user', JSON.stringify({
+                id: userId,
+                email: session.user.email,
+                ...newStats,
+              }));
+            }
+          )
+          .subscribe();
       } catch (error) {
         console.error('Error fetching user data:', error);
         setError(error.message || 'Error loading user data. Please try again.');
+        if (error.message.includes('Authentication required') || error.message.includes('Unable to refresh session')) {
+          localStorage.clear();
+          navigate('/login');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchUserStats();
+
+    // Cleanup subscription on component unmount
+    return () => {
+      if (subscription) {
+        supabase.removeChannel(subscription);
+      }
+    };
   }, [navigate]);
 
   return (
@@ -143,6 +157,9 @@ const Dashboard = () => {
             <p>{error}</p>
             <button onClick={() => window.location.reload()}>
               Retry
+            </button>
+            <button onClick={() => navigate('/login')}>
+              Go to Login
             </button>
           </div>
         ) : (

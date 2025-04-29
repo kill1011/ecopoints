@@ -11,21 +11,21 @@ const Contact = () => {
         <div className="contact-card">
           <FontAwesomeIcon icon={faMapMarkerAlt} className="contact-icon" />
           <h3>Location</h3>
-          <p>123 Eco Street, Green City</p>
-          <p>Philippines, 1234</p>
+          <p>Passi City College </p>
+          <p>Philippines</p>
         </div>
 
         <div className="contact-card">
           <FontAwesomeIcon icon={faPhone} className="contact-icon" />
           <h3>Phone</h3>
-          <p>+63 123 456 7890</p>
+          <p></p>
           <p>Mon-Fri: 9AM-5PM</p>
         </div>
 
         <div className="contact-card">
           <FontAwesomeIcon icon={faEnvelope} className="contact-icon" />
           <h3>Email</h3>
-          <p>support@ecopoints.com</p>
+          <p>PccEcoPoints@ecopoints.com</p>
           <p>info@ecopoints.com</p>
         </div>
       </div>

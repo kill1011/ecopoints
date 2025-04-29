@@ -8,15 +8,15 @@ import '../styles/Redemption.css';
 
 const Redemption = () => {
   const navigate = useNavigate();
-  const [userPoints, setUserPoints] = useState(0);
-   const [redeemAmount, setRedeemAmount] = useState('');
+  const [userData, setUserData] = useState({ points: 0, money: 0 });
+  const [redeemAmount, setRedeemAmount] = useState('');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('');
   const [loading, setLoading] = useState(false);
   const [pendingRedemptions, setPendingRedemptions] = useState([]);
 
   useEffect(() => {
-    const checkAuthAndFetchData = async () => {
+    const checkAuthAndFetchDataTwice = async () => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
@@ -34,7 +34,7 @@ const Redemption = () => {
         localStorage.setItem('user_id', session.user.id);
         localStorage.setItem('user_name', session.user.user_metadata?.name || session.user.email);
 
-        // Fetch user data after confirming authentication
+        // Fetch user data and pending redemptions
         await Promise.all([
           fetchUserData(),
           fetchPendingRedemptions()
@@ -46,7 +46,7 @@ const Redemption = () => {
       }
     };
 
-    checkAuthAndFetchData();
+    checkAuthAndFetchDataTwice();
   }, [navigate]);
 
   const fetchUserData = async () => {
@@ -58,7 +58,7 @@ const Redemption = () => {
 
       const { data: userData, error } = await supabase
         .from('users')
-        .select('points')
+        .select('points, money')
         .eq('id', session.user.id)
         .single();
 
@@ -68,13 +68,13 @@ const Redemption = () => {
         throw new Error('User data not found');
       }
 
-      setUserPoints(userData.points || 0);
+      setUserData({ points: userData.points || 0, money: userData.money || 0 });
       setMessage('');
       setMessageType('');
 
     } catch (error) {
       console.error('Error fetching user data:', error);
-      setUserPoints(0);
+      setUserData({ points: 0, money: 0 });
       setMessage('Error loading user data. Please try again.');
       setMessageType('error');
     }
@@ -131,27 +131,35 @@ const Redemption = () => {
       // Get current user data
       const { data: currentUser, error: userError } = await supabase
         .from('users')
-        .select('points')
+        .select('points, money')
         .eq('id', session.user.id)
         .single();
 
       if (userError) throw userError;
 
-      // Validate points
+      // Validate points and money
       if (pointsNeeded > currentUser.points) {
         setMessage(`Insufficient points. You need ${pointsNeeded} points to redeem ₱${amount}`);
         setMessageType('error');
         return;
       }
 
-      // Calculate new points balance
+      const newMoney = currentUser.money - amount;
+      if (newMoney < 0) {
+        setMessage(`Insufficient balance. You need ₱${amount} to redeem.`);
+        setMessageType('error');
+        return;
+      }
+
+      // Calculate new points and money balance
       const newPoints = currentUser.points - pointsNeeded;
 
-      // Update user's points
+      // Update user's points and money
       const { error: updateError } = await supabase
         .from('users')
         .update({ 
-          points: newPoints
+          points: newPoints,
+          money: newMoney
         })
         .eq('id', session.user.id);
 
@@ -210,10 +218,10 @@ const Redemption = () => {
       <div className="redemption-grid">
         <div className="stats-card">
           <h3>Available Points</h3>
-          <div className="points-value">{userPoints.toLocaleString()}</div>
+          <div className="points-value">{userData.points.toLocaleString()}</div>
           <h3>Available Balance</h3>
           <div className="money-value">
-            ₱{(userPoints / 100).toFixed(2)}
+            ₱{userData.money.toFixed(2)}
           </div>
           <small className="conversion-note">100 points = ₱1</small>
         </div>

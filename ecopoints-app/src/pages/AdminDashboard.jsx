@@ -51,10 +51,9 @@ const AdminDashboard = () => {
 
       if (usersError) {
         console.error('Users fetch error:', usersError);
-        throw new Error(`Failed to fetch users data: ${usersError.message}`);
+        throw new Error('Failed to fetch users data');
       }
 
-      console.log('Fetched users:', usersData); // Log the fetched users
       return usersData || [];
     } catch (error) {
       throw error;
@@ -82,7 +81,7 @@ const AdminDashboard = () => {
       setStats({
         totalUsers,
         totalPoints,
-        totalMoney: totalMoneyRedeemed,
+        totalMoney: totalMoneyRedeemed, // Update to show total redeemed money
         totalRecyclables
       });
     } catch (error) {
@@ -94,22 +93,17 @@ const AdminDashboard = () => {
     console.log('Starting admin dashboard load...');
     setLoading(true);
     try {
-      // Attempt to refresh the session first
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError) {
         console.error('Session error:', sessionError);
-        throw new Error(`Authentication failed: ${sessionError.message} (Code: ${sessionError.code || 'N/A'})`);
+        throw new Error('Authentication failed');
       }
 
       if (!session) {
-        console.log('No active session, attempting to refresh...');
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError || !refreshData.session) {
-          console.error('Session refresh error:', refreshError);
-          throw new Error('Unable to refresh session');
-        }
-        session = refreshData.session;
+        console.log('No active session');
+        navigate('/login');
+        return;
       }
 
       console.log('Session found:', session.user.id);
@@ -122,11 +116,11 @@ const AdminDashboard = () => {
 
       if (adminError) {
         console.error('Admin check error:', adminError);
-        throw new Error(`Failed to verify admin status: ${adminError.message}`);
+        throw new Error('Failed to verify admin status');
       }
 
       if (!adminCheck?.is_admin) {
-        throw new Error('Unauthorized access: User is not an admin');
+        throw new Error('Unauthorized access');
       }
 
       localStorage.setItem('is_admin', 'true');
@@ -141,15 +135,12 @@ const AdminDashboard = () => {
 
       try {
         const usersData = await fetchUsers();
-        if (usersData.length === 0) {
-          console.warn('No users found in the database');
-        }
         setUsers(usersData);
         calculateStats(usersData);
         setError(null);
       } catch (error) {
         console.error('Users fetch error:', error);
-        throw new Error(`Failed to fetch users data: ${error.message}`);
+        throw new Error('Failed to fetch users data');
       }
 
     } catch (error) {
@@ -279,7 +270,7 @@ const AdminDashboard = () => {
               <h2>Recent Users</h2>
               <button 
                 className="view-all-btn"
-                onClick={() => navigate('/admin/viewall')}
+                onClick={() => navigate('/admin/viewall')} // Update this line to match ViewAll component route
               >
                 View All
               </button>
@@ -300,17 +291,17 @@ const AdminDashboard = () => {
                 <tbody>
                   {users
                     .filter(user => 
-                      (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                      (user.email && user.email.toLowerCase().includes(searchTerm.toLowerCase()))
+                      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                      user.email.toLowerCase().includes(searchTerm.toLowerCase())
                     )
                     .slice(0, 5)
                     .map((user) => (
                       <tr key={user.id}>
-                        <td>{user.name || 'N/A'}</td>
-                        <td>{user.email || 'N/A'}</td>
+                        <td>{user.name}</td>
+                        <td>{user.email}</td>
                         <td>{user.points?.toLocaleString() || 0}</td>
-                        <td>₱{(user.money || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                        <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</td>
+                        <td>₱{user.money?.toLocaleString() || 0}</td>
+                        <td>{new Date(user.created_at).toLocaleDateString()}</td>
                         <td>
                           <span className={`status ${user.is_admin ? 'admin' : 'user'}`}>
                             {user.is_admin ? 'Admin' : 'User'}
@@ -324,7 +315,6 @@ const AdminDashboard = () => {
           </div>
         </main>
       </div>
-      <Footer />
     </div>
   );
 };

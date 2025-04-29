@@ -434,8 +434,8 @@ h1 {
   .status-card,
   .control-card,
   .preview-card {
-    max-width: calc(50% - 1rem);
-    flex: 0 1 calc(50% - 1rem);
+    max-width: calc(70% - 1rem);
+    flex: 0 1 calc(70% - 1rem);
   }
 }
 
