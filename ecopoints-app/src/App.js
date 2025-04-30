@@ -74,6 +74,7 @@ function App() {
                     <HistoryPage />
                   </ProtectedRoute>
                 }
+                
               />
               <Route
                 path="/contact"

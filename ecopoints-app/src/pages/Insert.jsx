@@ -36,8 +36,8 @@ const Insert = () => {
   const [totalPoints, setTotalPoints] = useState(0);
   const [totalMoney, setTotalMoney] = useState(0);
   const [recentDetections, setRecentDetections] = useState([]);
-  const [currentSessionId, setCurrentSessionId] = useState(null); // Track the current session
-  const [hasNewData, setHasNewData] = useState(false); // Track if new data was detected
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [hasNewData, setHasNewData] = useState(false);
   const timerRef = useRef(null);
   const commandDebounceRef = useRef(null);
   const pollRef = useRef(null);
@@ -53,13 +53,51 @@ const Insert = () => {
     setHasNewData(false);
   }, []);
 
-  const updateEarnings = useCallback((bottleCount, canCount) => {
-    const points = bottleCount * 3 + canCount * 5;
-    const money = (points / 100).toFixed(2);
-    setPointsEarned(points);
-    setMoneyEarned(money);
-    return { points, money };
+  const fetchMaterialValues = useCallback(async (material) => {
+    try {
+      const { data, error } = await supabase
+        .from('recyclables')
+        .select('points_per_piece, price_per_piece')
+        .eq('material', material)
+        .limit(1)
+        .single();
+
+      if (error) {
+        console.error('Error fetching material values:', error);
+        return { points_per_piece: 0, price_per_piece: 0 };
+      }
+
+      return {
+        points_per_piece: data?.points_per_piece || 0,
+        price_per_piece: data?.price_per_piece || 0,
+      };
+    } catch (error) {
+      console.error('Unexpected error fetching material values:', error);
+      return { points_per_piece: 0, price_per_piece: 0 };
+    }
   }, []);
+
+  const updateEarnings = useCallback(async (bottleCount, canCount) => {
+    let totalPoints = 0;
+    let totalMoney = 0;
+
+    if (bottleCount > 0) {
+      const { points_per_piece, price_per_piece } = await fetchMaterialValues('PLASTIC_BOTTLE');
+      totalPoints += bottleCount * points_per_piece;
+      totalMoney += bottleCount * price_per_piece;
+    }
+
+    if (canCount > 0) {
+      const { points_per_piece, price_per_piece } = await fetchMaterialValues('CAN');
+      totalPoints += canCount * points_per_piece;
+      totalMoney += canCount * price_per_piece;
+    }
+
+    totalMoney = totalMoney.toFixed(2);
+    setPointsEarned(totalPoints);
+    setMoneyEarned(totalMoney);
+    return { points: totalPoints, money: totalMoney };
+  }, [fetchMaterialValues]);
 
   const fetchRecentRecyclables = useCallback(async () => {
     if (!user || !currentSessionId) {
@@ -74,7 +112,7 @@ const Insert = () => {
         .from('recyclables')
         .select('material, quantity, created_at, device_id, session_id')
         .eq('user_id', user.id)
-        .eq('session_id', currentSessionId) // Only fetch for the current session
+        .eq('session_id', currentSessionId)
         .order('created_at', { ascending: false })
         .limit(10);
 
@@ -99,8 +137,8 @@ const Insert = () => {
         });
         setBottleCount(newBottleCount);
         setCanCount(newCanCount);
-        updateEarnings(newBottleCount, newCanCount);
-        setHasNewData(true); // Indicate new data was detected
+        await updateEarnings(newBottleCount, newCanCount);
+        setHasNewData(true);
       } else {
         console.log('No recent recyclables found for user:', user.id, 'session:', currentSessionId);
         setAlert({ type: 'info', message: 'No new recyclables detected in this session.' });
@@ -108,7 +146,7 @@ const Insert = () => {
       }
     } catch (error) {
       console.error('fetchRecentRecyclables error:', error);
-      setAlert({ type: 'error',  message: error.message });
+      setAlert({ type: 'error', message: error.message });
     }
   }, [user, currentSessionId, updateEarnings, resetSensorData]);
 
@@ -211,9 +249,9 @@ const Insert = () => {
           }
           console.log('Auth token retrieved:', session.access_token.substring(0, 10) + '...');
 
-          const sessionId = uuidv4(); // Generate a new session ID
-          setCurrentSessionId(sessionId); // Set the current session ID
-          resetSensorData(); // Reset data for the new session
+          const sessionId = uuidv4();
+          setCurrentSessionId(sessionId);
+          resetSensorData();
 
           const payload = {
             device_id: deviceId,
@@ -299,7 +337,7 @@ const Insert = () => {
       setIsSensing(false);
       setSystemStatus('Idle');
       setTimer('');
-      setCurrentSessionId(null); // Clear the session ID
+      setCurrentSessionId(null);
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -396,7 +434,7 @@ const Insert = () => {
     }
 
     console.log('Submitting recyclables:', { bottleCount, canCount });
-    const { points, money } = updateEarnings(bottleCount, canCount);
+    const { points, money } = await updateEarnings(bottleCount, canCount);
     setTotalBottleCount(prev => prev + bottleCount);
     setTotalCanCount(prev => prev + canCount);
     setTotalPoints(prev => prev + points);

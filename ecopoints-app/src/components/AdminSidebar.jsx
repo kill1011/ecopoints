@@ -35,6 +35,12 @@ const AdminSidebar = ({ isOpen }) => {
               <span>Approvals</span>
             </Link>
           </li>
+          <li className={location.pathname === '/admin/settings' ? 'active' : ''}>
+            <Link to="/admin/settings">
+              <FontAwesomeIcon icon={faCog} />
+              <span>Settings</span>
+            </Link>
+          </li>
           <li className={location.pathname === '/admin/history' ? 'active' : ''}>
             <Link to="/admin/history">
               <FontAwesomeIcon icon={faHistory} />

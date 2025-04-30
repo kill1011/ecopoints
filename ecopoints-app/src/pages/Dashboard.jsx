@@ -31,7 +31,6 @@ const Dashboard = () => {
 
   const fetchUserStats = async () => {
     try {
-      // Get the current session
       let { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
       if (sessionError) {
@@ -52,7 +51,6 @@ const Dashboard = () => {
       const userId = session.user.id;
       console.log('Authenticated user ID:', userId);
 
-      // Fetch user details
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) {
         console.error('User fetch error:', userError);
@@ -77,7 +75,6 @@ const Dashboard = () => {
       userName = userName || 'Guest';
       console.log('Fetched user name:', userName);
 
-      // Fetch user stats from user_stats table
       let { data: statsData, error: statsError } = await supabase
         .from('user_stats')
         .select('total_bottle_count, total_can_count, total_points, total_money')
@@ -133,7 +130,6 @@ const Dashboard = () => {
       localStorage.setItem('user', JSON.stringify(userData));
       setStats(updatedStats);
 
-      // Fetch notifications
       const { data: notificationData, error: notificationError } = await supabase
         .from('user_notifications')
         .select('*')
@@ -289,7 +285,7 @@ const Dashboard = () => {
       }
       window.removeEventListener('userBalanceUpdated', handleBalanceUpdate);
     };
-  }, [navigate]);
+  }, [navigate, stats.name]);
 
   useEffect(() => {
     console.log('Route changed to:', location.pathname);
