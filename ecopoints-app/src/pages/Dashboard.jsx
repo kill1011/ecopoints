@@ -94,7 +94,7 @@ const Dashboard = () => {
           cans: statsData.total_can_count || 0,
         };
 
-        localStorage.setItem('user', JSON.stringify({
+        localStorage.setItem('users', JSON.stringify({
           id: userId,
           email: session.user.email,
           name: updatedStats.name,
