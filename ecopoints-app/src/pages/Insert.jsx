@@ -36,6 +36,8 @@ const Insert = () => {
   const [totalPoints, setTotalPoints] = useState(0);
   const [totalMoney, setTotalMoney] = useState(0);
   const [recentDetections, setRecentDetections] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null); // Track the current session
+  const [hasNewData, setHasNewData] = useState(false); // Track if new data was detected
   const timerRef = useRef(null);
   const commandDebounceRef = useRef(null);
   const pollRef = useRef(null);
@@ -48,29 +50,31 @@ const Insert = () => {
     setPointsEarned(0);
     setMoneyEarned(0);
     setRecentDetections([]);
+    setHasNewData(false);
   }, []);
 
   const updateEarnings = useCallback((bottleCount, canCount) => {
-    const points = bottleCount * 3 + canCount * 5; // Updated: 3 points per bottle, 5 points per can
-    const money = (points / 100).toFixed(2); // 100 points = 1 peso
+    const points = bottleCount * 3 + canCount * 5;
+    const money = (points / 100).toFixed(2);
     setPointsEarned(points);
     setMoneyEarned(money);
     return { points, money };
   }, []);
 
   const fetchRecentRecyclables = useCallback(async () => {
-    if (!user) {
-      console.log('fetchRecentRecyclables: No user authenticated.');
-      setAlert({ type: 'error', message: 'Please log in to fetch recyclables.' });
+    if (!user || !currentSessionId) {
+      console.log('fetchRecentRecyclables: No user or session ID.');
+      setAlert({ type: 'error', message: 'Please start a new session.' });
       return;
     }
 
     try {
-      console.log('Fetching recent recyclables for user:', user.id);
+      console.log('Fetching recent recyclables for user:', user.id, 'session:', currentSessionId);
       const { data, error } = await supabase
         .from('recyclables')
         .select('material, quantity, created_at, device_id, session_id')
         .eq('user_id', user.id)
+        .eq('session_id', currentSessionId) // Only fetch for the current session
         .order('created_at', { ascending: false })
         .limit(10);
 
@@ -96,16 +100,17 @@ const Insert = () => {
         setBottleCount(newBottleCount);
         setCanCount(newCanCount);
         updateEarnings(newBottleCount, newCanCount);
+        setHasNewData(true); // Indicate new data was detected
       } else {
-        console.log('No recent recyclables found for user:', user.id);
-        setAlert({ type: 'info', message: 'No recent recyclables found.' });
+        console.log('No recent recyclables found for user:', user.id, 'session:', currentSessionId);
+        setAlert({ type: 'info', message: 'No new recyclables detected in this session.' });
         resetSensorData();
       }
     } catch (error) {
       console.error('fetchRecentRecyclables error:', error);
-      setAlert({ type: 'error', message: error.message });
+      setAlert({ type: 'error',  message: error.message });
     }
-  }, [user, updateEarnings, resetSensorData]);
+  }, [user, currentSessionId, updateEarnings, resetSensorData]);
 
   const checkExistingCommands = useCallback(async () => {
     if (!user) {
@@ -206,12 +211,16 @@ const Insert = () => {
           }
           console.log('Auth token retrieved:', session.access_token.substring(0, 10) + '...');
 
+          const sessionId = uuidv4(); // Generate a new session ID
+          setCurrentSessionId(sessionId); // Set the current session ID
+          resetSensorData(); // Reset data for the new session
+
           const payload = {
             device_id: deviceId,
             command: 'start',
             user_id: user.id,
-            session_id: uuidv4(),
-            auth_token: session.access_token, // Add auth_token to satisfy NOT NULL constraint
+            session_id: sessionId,
+            auth_token: session.access_token,
             processed: false,
             created_at: new Date().toISOString(),
           };
@@ -272,7 +281,7 @@ const Insert = () => {
         }
       }
     }, 500);
-  }, [user, isSensing, deviceId, checkExistingCommands, cleanupUserCommands]);
+  }, [user, isSensing, deviceId, checkExistingCommands, cleanupUserCommands, resetSensorData]);
 
   const stopSensing = useCallback(async () => {
     if (commandDebounceRef.current) {
@@ -290,6 +299,7 @@ const Insert = () => {
       setIsSensing(false);
       setSystemStatus('Idle');
       setTimer('');
+      setCurrentSessionId(null); // Clear the session ID
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -308,7 +318,7 @@ const Insert = () => {
           command: 'stop',
           user_id: user.id,
           session_id: uuidv4(),
-          auth_token: session.access_token, // Add auth_token to satisfy NOT NULL constraint
+          auth_token: session.access_token,
           processed: false,
           created_at: new Date().toISOString(),
         };
@@ -376,6 +386,12 @@ const Insert = () => {
     if (!user) {
       console.log('handleSubmit: No user authenticated.');
       setAlert({ type: 'error', message: 'Please log in to submit recyclables.' });
+      return;
+    }
+
+    if (!hasNewData) {
+      console.log('handleSubmit: No new data detected in this session.');
+      setAlert({ type: 'warning', message: 'No new recyclables detected in this session.' });
       return;
     }
 
@@ -530,48 +546,48 @@ const Insert = () => {
                 type="button"
                 className="control-btn refresh-btn"
                 onClick={fetchRecentRecyclables}
-                disabled={!user}
+                disabled={!user || !isSensing}
               >
                 <FontAwesomeIcon icon={faSync} /> Refresh
               </button>
             </div>
-            <button type="submit" className="control-btn submit-btn" disabled={!isSensing || !user}>
+            <button type="submit" className="control-btn submit-btn" disabled={!isSensing || !user || !hasNewData}>
               Add Recyclables
             </button>
             <div className="timer-display">{timer}</div>
           </form>
 
           <div className="preview-card">
-          <div className="stat-label">Earnings Preview</div>
-          <div className="stat-value">{pointsEarned}</div>
-          <div className="stat-label">Points</div>
-          <div className="stat-value">₱{moneyEarned}</div>
-          <div className="stat-label">Money</div>
-        </div>
+            <div className="stat-label">Earnings Preview</div>
+            <div className="stat-value">{pointsEarned}</div>
+            <div className="stat-label">Points</div>
+            <div className="stat-value">₱{moneyEarned}</div>
+            <div className="stat-label">Money</div>
+          </div>
 
-        <div className="stats-card">
-          <div className="stat-label">Total Statistics</div>
-          <div className="stat-label">Total Plastic Bottles: {totalBottleCount}</div>
-          <div className="stat-label">Total Cans: {totalCanCount}</div>
-          <div className="stat-label">Total Points: {totalPoints}</div>
-          <div className="stat-label">Total Money: ₱{totalMoney}</div>
-        </div>
+          <div className="stats-card">
+            <div className="stat-label">Total Statistics</div>
+            <div className="stat-label">Total Plastic Bottles: {totalBottleCount}</div>
+            <div className="stat-label">Total Cans: {totalCanCount}</div>
+            <div className="stat-label">Total Points: {totalPoints}</div>
+            <div className="stat-label">Total Money: ₱{totalMoney}</div>
+          </div>
 
-        <div className="history-card">
-          <div className="stat-label">Recent Detections</div>
-          {recentDetections.length > 0 ? (
-            <ul>
-              {recentDetections.map((detection, index) => (
-                <li key={index}>
-                  {detection.material} (Qty: {detection.quantity}) at {new Date(detection.created_at).toLocaleTimeString()}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No recent detections.</p>
-          )}
+          <div className="history-card">
+            <div className="stat-label">Recent Detections</div>
+            {recentDetections.length > 0 ? (
+              <ul>
+                {recentDetections.map((detection, index) => (
+                  <li key={index}>
+                    {detection.material} (Qty: {detection.quantity}) at {new Date(detection.created_at).toLocaleTimeString()}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No recent detections.</p>
+            )}
+          </div>
         </div>
-      </div>
       </div>
     </Layout>
   );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRecycle, faExchangeAlt, faUser, faBell } from '@fortawesome/free-solid-svg-icons';
+import { faRecycle, faExchangeAlt, faUser } from '@fortawesome/free-solid-svg-icons';
 import '../styles/Dashboard.css';
 import { supabase } from '../config/supabase';
 import Header from '../components/Header';
@@ -9,6 +9,7 @@ import Sidebar from '../components/Sidebar';
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [stats, setStats] = useState({
     name: 'Guest',
     points: 0,
@@ -30,8 +31,9 @@ const Dashboard = () => {
 
   const fetchUserStats = async () => {
     try {
+      // Get the current session
       let { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
+
       if (sessionError) {
         console.error('Session error:', sessionError);
         throw new Error('Authentication required: ' + sessionError.message);
@@ -48,10 +50,35 @@ const Dashboard = () => {
       }
 
       const userId = session.user.id;
-      console.log('Fetching stats for user ID:', userId);
+      console.log('Authenticated user ID:', userId);
 
-      // Fetch user stats from user_stats table (as in Insert.jsx)
-      const { data: statsData, error: statsError } = await supabase
+      // Fetch user details
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('User fetch error:', userError);
+        throw new Error('Failed to fetch user profile: ' + userError.message);
+      }
+
+      console.log('User data from getUser:', user);
+      console.log('User metadata:', user?.user_metadata);
+
+      let userName = user?.user_metadata?.name;
+      if (!userName) {
+        console.log('No name found in user_metadata, setting a default name...');
+        const { error: updateError } = await supabase.auth.updateUser({
+          data: { name: 'User' + userId.slice(0, 8) },
+        });
+        if (updateError) {
+          console.error('Error updating user metadata:', updateError);
+        } else {
+          userName = 'User' + userId.slice(0, 8);
+        }
+      }
+      userName = userName || 'Guest';
+      console.log('Fetched user name:', userName);
+
+      // Fetch user stats from user_stats table
+      let { data: statsData, error: statsError } = await supabase
         .from('user_stats')
         .select('total_bottle_count, total_can_count, total_points, total_money')
         .eq('user_id', userId)
@@ -60,7 +87,7 @@ const Dashboard = () => {
       if (statsError) {
         console.error('User stats fetch error:', statsError);
         if (statsError.code === 'PGRST116') {
-          // No stats found, initialize them
+          console.log('No stats found for user ID:', userId, 'initializing...');
           const { error: insertError } = await supabase
             .from('user_stats')
             .insert({
@@ -74,39 +101,39 @@ const Dashboard = () => {
             console.error('Error initializing user stats:', insertError);
             throw new Error('Failed to initialize user stats: ' + insertError.message);
           }
-          // Set default stats
-          setStats({
-            name: session.user.user_metadata?.name || 'Guest',
-            points: 0,
-            money: 0,
-            bottles: 0,
-            cans: 0,
-          });
+          statsData = {
+            total_bottle_count: 0,
+            total_can_count: 0,
+            total_points: 0,
+            total_money: 0,
+          };
         } else {
           throw new Error('Failed to fetch user stats: ' + statsError.message);
         }
-      } else {
-        const updatedStats = {
-          name: session.user.user_metadata?.name || 'Guest',
-          points: statsData.total_points || 0,
-          money: statsData.total_money || 0,
-          bottles: statsData.total_bottle_count || 0,
-          cans: statsData.total_can_count || 0,
-        };
-
-        localStorage.setItem('users', JSON.stringify({
-          id: userId,
-          email: session.user.email,
-          name: updatedStats.name,
-          points: updatedStats.points,
-          money: updatedStats.money,
-          bottles: updatedStats.bottles,
-          cans: updatedStats.cans,
-        }));
-
-        setStats(updatedStats);
       }
 
+      console.log('Fetched stats from user_stats:', statsData);
+      const updatedStats = {
+        name: userName,
+        points: statsData.total_points || 0,
+        money: statsData.total_money || 0,
+        bottles: statsData.total_bottle_count || 0,
+        cans: statsData.total_can_count || 0,
+      };
+
+      const userData = {
+        id: userId,
+        email: session.user.email,
+        name: updatedStats.name,
+        points: updatedStats.points,
+        money: updatedStats.money,
+        bottles: updatedStats.bottles,
+        cans: updatedStats.cans,
+      };
+      localStorage.setItem('user', JSON.stringify(userData));
+      setStats(updatedStats);
+
+      // Fetch notifications
       const { data: notificationData, error: notificationError } = await supabase
         .from('user_notifications')
         .select('*')
@@ -144,39 +171,45 @@ const Dashboard = () => {
       try {
         const userId = await fetchUserStats();
 
-        // Update subscription to listen to user_stats table instead of users
         userSubscription = supabase
           .channel('public:user_stats')
           .on(
             'postgres_changes',
             {
-              event: 'UPDATE',
+              event: '*',
               schema: 'public',
               table: 'user_stats',
               filter: `user_id=eq.${userId}`,
             },
             (payload) => {
               console.log('Received real-time update for user_stats:', payload);
-              const updatedStats = payload.new;
-              const newStats = {
-                name: stats.name, // Name isn't in user_stats, preserve it
-                points: updatedStats.total_points || 0,
-                money: updatedStats.total_money || 0,
-                bottles: updatedStats.total_bottle_count || 0,
-                cans: updatedStats.total_can_count || 0,
-              };
-              setStats(newStats);
-              localStorage.setItem('user', JSON.stringify({
-                id: userId,
-                email: localStorage.getItem('user')?.email,
-                ...newStats,
-              }));
+              if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                const updatedStats = payload.new;
+                setStats((prev) => ({
+                  ...prev,
+                  points: updatedStats.total_points || 0,
+                  money: updatedStats.total_money || 0,
+                  bottles: updatedStats.total_bottle_count || 0,
+                  cans: updatedStats.total_can_count || 0,
+                }));
+                const userData = {
+                  id: userId,
+                  email: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).email : '',
+                  name: stats.name,
+                  points: updatedStats.total_points || 0,
+                  money: updatedStats.total_money || 0,
+                  bottles: updatedStats.total_bottle_count || 0,
+                  cans: updatedStats.total_can_count || 0,
+                };
+                localStorage.setItem('user', JSON.stringify(userData));
+              }
             }
           )
           .subscribe((status, error) => {
             console.log('User subscription status:', status);
             if (error) {
               console.error('User subscription error:', error);
+              fetchUserStats();
             }
           });
 
@@ -210,14 +243,42 @@ const Dashboard = () => {
 
     const handleBalanceUpdate = (event) => {
       console.log('Received userBalanceUpdated event:', event.detail);
-      setStats((prev) => ({
-        ...prev,
-        points: event.detail.points,
-        money: event.detail.money,
-      }));
+      const updatedStats = {
+        points: event.detail.points || stats.points,
+        money: event.detail.money || stats.money,
+        bottles: event.detail.bottles || stats.bottles,
+        cans: event.detail.cans || stats.cans,
+        name: stats.name,
+      };
+      setStats(updatedStats);
+      const updatedUserData = {
+        id: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).id : '',
+        email: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).email : '',
+        name: updatedStats.name,
+        points: updatedStats.points,
+        money: updatedStats.money,
+        bottles: updatedStats.bottles,
+        cans: updatedStats.cans,
+      };
+      localStorage.setItem('user', JSON.stringify(updatedUserData));
+      localStorage.setItem('pendingBalanceUpdate', JSON.stringify(updatedStats));
     };
 
     window.addEventListener('userBalanceUpdated', handleBalanceUpdate);
+
+    const pendingUpdate = localStorage.getItem('pendingBalanceUpdate');
+    if (pendingUpdate) {
+      console.log('Applying pending balance update from localStorage:', pendingUpdate);
+      const parsedUpdate = JSON.parse(pendingUpdate);
+      setStats((prev) => ({
+        ...prev,
+        points: parsedUpdate.points || prev.points,
+        money: parsedUpdate.money || prev.money,
+        bottles: parsedUpdate.bottles || prev.bottles,
+        cans: parsedUpdate.cans || prev.cans,
+      }));
+      localStorage.removeItem('pendingBalanceUpdate');
+    }
 
     return () => {
       if (userSubscription) {
@@ -229,6 +290,23 @@ const Dashboard = () => {
       window.removeEventListener('userBalanceUpdated', handleBalanceUpdate);
     };
   }, [navigate]);
+
+  useEffect(() => {
+    console.log('Route changed to:', location.pathname);
+    if (location.pathname === '/dashboard') {
+      console.log('Refetching stats due to navigation...');
+      fetchUserStats();
+    }
+  }, [location]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log('Polling for stats updates...');
+      fetchUserStats();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     console.log('Dashboard Stats Updated:', stats);
@@ -258,19 +336,15 @@ const Dashboard = () => {
     <div className="app-container">
       <Header userName={stats.name} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
       <Sidebar isOpen={isSidebarOpen} />
-      
+
       <div className="dashboard-container">
         {loading ? (
           <div className="loading-state">Loading dashboard data...</div>
         ) : error ? (
           <div className="error-state">
             <p>{error}</p>
-            <button onClick={() => window.location.reload()}>
-              Retry
-            </button>
-            <button onClick={() => navigate('/login')}>
-              Go to Login
-            </button>
+            <button onClick={() => window.location.reload()}>Retry</button>
+            <button onClick={() => navigate('/login')}>Go to Login</button>
           </div>
         ) : (
           <main className="main-content">

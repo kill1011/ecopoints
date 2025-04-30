@@ -51,6 +51,8 @@ const AdminDashboard = () => {
         throw new Error('Failed to fetch users data');
       }
 
+      console.log('Fetched users:', usersData);
+
       // Fetch user stats from user_stats table
       const { data: statsData, error: statsError } = await supabase
         .from('user_stats')
@@ -61,6 +63,43 @@ const AdminDashboard = () => {
         throw new Error('Failed to fetch user stats');
       }
 
+      console.log('Fetched user stats:', statsData);
+
+      // Initialize user_stats for users who don't have an entry
+      const usersWithoutStats = usersData.filter(user => !statsData.some(stat => stat.user_id === user.id));
+      if (usersWithoutStats.length > 0) {
+        console.log('Users without stats:', usersWithoutStats);
+        const defaultStats = usersWithoutStats.map(user => ({
+          user_id: user.id,
+          total_points: 0,
+          total_money: 0,
+          total_bottle_count: 0,
+          total_can_count: 0,
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error: insertError } = await supabase
+          .from('user_stats')
+          .insert(defaultStats);
+
+        if (insertError) {
+          console.error('Error initializing user stats:', insertError);
+          throw new Error('Failed to initialize user stats');
+        }
+
+        // Refetch stats after initializing
+        const { data: updatedStatsData, error: updatedStatsError } = await supabase
+          .from('user_stats')
+          .select('user_id, total_points, total_money, total_bottle_count, total_can_count');
+
+        if (updatedStatsError) {
+          console.error('Updated user stats fetch error:', updatedStatsError);
+          throw new Error('Failed to fetch updated user stats');
+        }
+
+        statsData.push(...updatedStatsData);
+      }
+
       // Combine user metadata with stats
       const combinedUsers = usersData.map(user => {
         const userStats = statsData.find(stats => stats.user_id === user.id) || {};
@@ -68,15 +107,16 @@ const AdminDashboard = () => {
           id: user.id,
           name: user.name || 'Unknown',
           email: user.email || 'N/A',
-          points: userStats.total_points || 0,
-          money: userStats.total_money || 0,
-          bottles: userStats.total_bottle_count || 0,
-          cans: userStats.total_can_count || 0,
+          points: Number(userStats.total_points) || 0,
+          money: Number(userStats.total_money) || 0,
+          bottles: Number(userStats.total_bottle_count) || 0,
+          cans: Number(userStats.total_can_count) || 0,
           is_admin: user.is_admin || false,
           created_at: user.created_at
         };
       });
 
+      console.log('Combined users:', combinedUsers);
       return combinedUsers;
     } catch (error) {
       throw error;
@@ -98,7 +138,7 @@ const AdminDashboard = () => {
       if (redemptionError) throw redemptionError;
 
       // Calculate total money redeemed
-      const totalMoneyRedeemed = redemptions?.reduce((acc, redemption) => acc + (redemption.amount || 0), 0) || 0;
+      const totalMoneyRedeemed = redemptions?.reduce((acc, redemption) => acc + (Number(redemption.amount) || 0), 0) || 0;
 
       setStats({
         totalUsers,
@@ -158,7 +198,7 @@ const AdminDashboard = () => {
       try {
         const usersData = await fetchUsers();
         setUsers(usersData);
-        calculateStats(usersData);
+        await calculateStats(usersData);
         setError(null);
       } catch (error) {
         console.error('Users fetch error:', error);
@@ -321,11 +361,11 @@ const AdminDashboard = () => {
                       <tr key={user.id}>
                         <td>{user.name}</td>
                         <td>{user.email}</td>
-                        <td>{user.points?.toLocaleString() || 0}</td>
-                        <td>₱{user.money?.toLocaleString(undefined, {
+                        <td>{user.points.toLocaleString()}</td>
+                        <td>₱{user.money.toLocaleString(undefined, {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2
-                        }) || 0}</td>
+                        })}</td>
                         <td>{new Date(user.created_at).toLocaleDateString()}</td>
                         <td>
                           <span className={`status ${user.is_admin ? 'admin' : 'user'}`}>
