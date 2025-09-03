@@ -135,7 +135,7 @@
     top: 60px; /* Under header */
     left: -280px; /* Hidden by default */
     height: calc(100vh - 60px);
-    z-index: 40; /* Lower than header */
+    z-index: 50; /* Lower than header */
   }
 
   .admin-sidebar.open {
