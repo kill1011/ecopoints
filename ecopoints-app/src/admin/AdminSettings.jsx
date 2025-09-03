@@ -242,6 +242,7 @@ const AdminSettings = () => {
               <div className="table-header">
                 <div className="table-column material-column">Material</div>
                 <div className="table-column">Points per Piece</div>
+                <div className="table-column">Price per Piece</div>
                 <div className="table-column actions-column">Actions</div>
               </div>
               {uniqueMaterials.map((item) => (
@@ -253,7 +254,7 @@ const AdminSettings = () => {
                     <div className="value-control">
                       <input
                         type="number"
-                        min="0"
+                        min="S"
                         step="0.5"
                         value={
                           pointChanges[item.material] !== undefined
@@ -272,8 +273,31 @@ const AdminSettings = () => {
                       Current: {(item.points_per_piece ?? 0).toFixed(2)} points
                     </div>
                   </div>
+                  <div className="table-column">
+                    <div className="value-control">
+                      <input
+                        type="number"
+                        min=""
+                        step="1"
+                        value={
+                          priceChanges[item.material] !== undefined
+                            ? priceChanges[item.material]
+                            : item.price_per_piece ?? 0
+                        }
+                        onChange={(e) => {
+                          const value = parseFloat(e.target.value);
+                          if (!isNaN(value) && value >= 0) {
+                            handlePriceChange(item.material, value);
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="current-value">
+                      Current: ₱{(item.price_per_piece ?? 0).toFixed(2)}
+                    </div>
+                  </div>
                   <div className="table-column actions-column">
-                    {pointChanges[item.material] !== undefined && (
+                    {(pointChanges[item.material] !== undefined || priceChanges[item.material] !== undefined) && (
                       <div className="button-group">
                         <button 
                           className="save-button"
