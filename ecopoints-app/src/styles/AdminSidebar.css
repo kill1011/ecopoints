@@ -7,7 +7,7 @@
   height: 100vh;
   background-color: white;
   box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
-  z-index: 50;
+  z-index: 1200; /* Make sure this is higher than your header's z-index */
   transition: left 0.3s ease-in-out;
   display: flex;
   flex-direction: column;
