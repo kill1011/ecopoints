@@ -144,7 +144,7 @@
 
   .dashboard-content {
     margin-left: 0;
-    padding-top: 80px; /* Account for header */
+    padding-top: 120px; /* Account for header */
     padding-bottom: 80px;
   }
 
