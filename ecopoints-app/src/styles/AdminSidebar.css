@@ -10,7 +10,7 @@
   top: 60px; /* Adjust for header height */
   bottom: 60px; /* Space for footer */
   overflow-y: auto; /* Enable scrolling if content is too long */
-  z-index: 100;
+  z-index: 1000;
 }
 
 .admin-sidebar.open {
@@ -116,6 +116,15 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
+}
+
+/* Ensure header is above sidebar */
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1100; /* Higher than sidebar */
 }
 
 /* Responsive Design */
