@@ -1,10 +1,10 @@
-/* Ensure header stays above sidebar */
+/* Ensure header stays above sidebar with increased height */
 .header {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: 60px; /* Adjust if your header height differs */
+  height: 100px; /* Increased from 60px to match the previous design */
   background-color: #1a2e1a; /* Match the green from the image */
   z-index: 1100; /* Higher than sidebar's z-index: 50 */
   display: flex;
@@ -36,7 +36,7 @@
 .admin-sidebar {
   position: fixed;
   top: 0;
-  margin-top: 60px; /* Align below header (match header height) */
+  margin-top: 100px; /* Adjusted to match the new header height */
   left: -280px;
   width: 280px;
   height: 100vh;
@@ -228,8 +228,8 @@
 /* Responsive Design */
 @media (max-width: 768px) {
   .admin-sidebar {
-    margin-top: 60px; /* Align below header */
-    height: calc(100vh - 60px); /* Adjust for header */
+    margin-top: 100px; /* Adjusted to match the new header height */
+    height: calc(100vh - 100px); /* Adjust for header */
     bottom: 0; /* Extend to bottom */
   }
 
@@ -240,7 +240,7 @@
   .dashboard-content {
     margin-left: 0;
     padding-bottom: 80px;
-    margin-top: 60px; /* Ensure content starts below header */
+    margin-top: 100px; /* Ensure content starts below header */
   }
 
   .main-content {
