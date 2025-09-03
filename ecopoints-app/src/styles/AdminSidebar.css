@@ -185,5 +185,5 @@
 
 /* Make sure header has higher z-index than sidebar */
 .header, .admin-header {
-  z-index: 50 !important; /* Higher than sidebar */
+  z-index: 100 !important; /* Much higher than sidebar */
 }
