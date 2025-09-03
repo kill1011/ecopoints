@@ -163,7 +163,7 @@
 /* Responsive Design */
 @media (max-width: 768px) {
   .admin-sidebar {
-    top: 60px;
+    top: 10px;
     left: -280px;
     height: calc(100vh - 60px);
     z-index: 1000;
