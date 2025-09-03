@@ -1,17 +1,17 @@
 .admin-sidebar {
   position: fixed;
   top: 0;
-  margin-top: 20px;
   left: -280px;
   width: 280px;
   height: 100vh;
   background-color: white;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
   z-index: 50;
-  transition: left 0.3s ease-in-out;
+  border-radius: 0 1rem 1rem 0;
   display: flex;
   flex-direction: column;
-  border-radius: 0 1rem 1rem 0;
+  transition: left 0.3s ease-in-out;
+  overflow-y: auto;
 }
 
 .admin-sidebar.open {
@@ -26,61 +26,7 @@
   border-bottom: 1px solid #eee;
 }
 
-.logo-container {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-}
-
-.close-button {
-  padding: 0.5rem;
-  background: none;
-  border: none;
-  color: #888;
-  cursor: pointer;
-  font-size: 1.25rem;
-}
-
-.admin-user-info {
-  padding: 1.5rem;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  border-bottom: 1px solid #eee;
-}
-
-.admin-user-avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background-color: #05673e;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
-}
-
-.admin-user-details h3 {
-  color: #16213e;
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0;
-}
-
-.admin-user-details p {
-  color: #888;
-  font-size: 0.875rem;
-  margin: 0;
-}
-
-.admin-nav-menu {
+.admin-sidebar nav {
   flex: 1;
   padding: 1rem;
   display: flex;
@@ -91,59 +37,76 @@
   padding-bottom: 80px; /* Space for logout button */
 }
 
-.admin-nav-item {
+.admin-sidebar nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.admin-sidebar nav ul li {
+  margin: 0.5rem 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.admin-sidebar nav ul li a,
+.admin-sidebar nav ul li button {
   display: flex;
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
   color: #05673e;
+  text-decoration: none;
   background: none;
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease-in-out;
-  text-align: left;
-  width: 100%;
   font-size: 16px;
   font-weight: 500;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease-in-out;
+  width: 100%;
+  text-align: left;
 }
 
-.admin-nav-item:hover {
+.admin-sidebar nav ul li.active a {
+  background-color: #16213e;
+  color: #00ff95;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.admin-sidebar nav ul li a:hover,
+.admin-sidebar nav ul li button:hover {
   background-color: #f0f0f0;
   color: #05673e;
 }
 
-.admin-nav-item.active {
-  background-color: #05673e;
-  color: white;
+.admin-sidebar nav ul li svg {
+  margin-right: 12px;
+  width: 20px;
+  height: 20px;
 }
 
-.admin-nav-icon {
-  font-size: 1.25rem;
-  width: 1.25rem;
-}
-
-.admin-nav-item.logout {
+.admin-sidebar .logout-button {
   position: absolute;
   bottom: 60px;
   left: 1rem;
   right: 1rem;
-  margin-top: auto;
   background-color: #fff;
   color: #dc3545;
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  font-weight: 500;
+  text-align: center;
+  border: none;
+  cursor: pointer;
+  z-index: 101;
+  transition: all 0.2s ease-in-out;
 }
 
-.admin-nav-item.logout:hover {
+.admin-sidebar .logout-button:hover {
   background-color: #ffebee;
   color: #c62828;
-}
-
-.admin-nav-item.logout .admin-nav-icon {
-  color: inherit;
-  margin-right: 0.5rem;
 }
 
 .admin-sidebar-overlay {
@@ -220,21 +183,7 @@
   }
 }
 
-@media (min-width: 768px) {
-  .admin-sidebar {
-    left: 0;
-  }
-
-  .close-button {
-    display: none;
-  }
-
-  .admin-sidebar-overlay {
-    display: none;
-  }
-}
-
-/* Smooth transition for all hover effects */
+/* Add smooth transition for all hover effects */
 * {
   transition: all 0.3s ease;
 }
