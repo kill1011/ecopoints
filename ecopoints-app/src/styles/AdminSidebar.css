@@ -1,12 +1,13 @@
+/* --- Base styles --- */
 .admin-sidebar {
   position: fixed;
-  top: 60px; /* Position under header (assuming header height is 60px) */
+  top: 0;
   left: -280px;
   width: 280px;
-  height: calc(100vh - 60px); /* Full height minus header height */
+  height: 100vh;
   background-color: white;
   box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
-  z-index: 40; /* Lower than header but higher than content */
+  z-index: 50;
   transition: left 0.3s ease-in-out;
   display: flex;
   flex-direction: column;
@@ -127,19 +128,28 @@
     height: calc(100vh - 60px);
     z-index: 40;
   }
+  .admin-sidebar-overlay {
+    display: none;
+  }
 }
 
 /* Mobile: sidebar slides in from left, still under header */
 @media (max-width: 767px) {
   .admin-sidebar {
-    top: 60px; /* Under header */
-    left: -280px; /* Hidden by default */
+    top: 60px; /* Height of header */
+    margin-top: 0;
     height: calc(100vh - 60px);
-    z-index: 40; /* Lower than header */
+    z-index: 1; /* Lower than header (header z-index should be > 1) */
+    border-radius: 0 1rem 1rem 0;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
   }
 
   .admin-sidebar.open {
     left: 0;
+  }
+
+  .admin-sidebar nav {
+    padding-top: 120px; /* Push content below header */
   }
 
   .dashboard-content {
@@ -156,6 +166,24 @@
     width: calc(280px - 32px);
     left: 16px;
     bottom: 80px; /* Consistent spacing above footer */
+  }
+
+  .admin-sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease-in-out;
+  }
+
+  .admin-sidebar-overlay.active {
+    opacity: 1;
+    visibility: visible;
   }
 }
 
