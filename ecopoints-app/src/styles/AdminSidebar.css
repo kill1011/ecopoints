@@ -1,3 +1,18 @@
+/* Ensure header stays above sidebar */
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px; /* Adjust if your header height differs */
+  background-color: #1a2e1a; /* Match the green from the image */
+  z-index: 1100; /* Higher than sidebar's z-index: 1000 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white; /* Adjust as needed */
+}
+
 .admin-sidebar {
   width: 280px;
   background-color: white;
@@ -123,9 +138,10 @@
   .admin-sidebar {
     transform: translateX(-100%);
     z-index: 1000;
-   
+    top: 60px; /* Align below header (match header height) */
     min-height: calc(100vh - 120px); /* Adjust for mobile */
-    bottom: 120px; /* More space for mobile footer */
+    bottom: 60px; /* Space for footer */
+    width: 280px; /* Ensure consistent width */
   }
 
   .admin-sidebar.open {
@@ -133,12 +149,13 @@
   }
 
   .admin-sidebar nav {
-    padding-top: 80px;
+    padding-top: 20px; /* Reduce padding to avoid extra space */
   }
 
   .dashboard-content {
     margin-left: 0;
     padding-bottom: 80px;
+    margin-top: 60px; /* Ensure content starts below header */
   }
 
   .main-content {
@@ -148,7 +165,6 @@
   .logout-button {
     width: calc(280px - 32px); /* Keep consistent with desktop */
     left: 16px; /* Reset left position */
-    transform: none; /* Remove transform */
     bottom: 20px; /* Consistent spacing */
     max-width: none; /* Remove max-width limitation */
   }
