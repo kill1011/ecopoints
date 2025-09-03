@@ -1,13 +1,12 @@
 .admin-sidebar {
   position: fixed;
-  top: 0;
-  margin-top: 20px;
+  top: 60px; /* Position under header (assuming header height is 60px) */
   left: -280px;
   width: 280px;
-  height: 100vh;
+  height: calc(100vh - 60px); /* Full height minus header height */
   background-color: white;
   box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
-  z-index: 50;
+  z-index: 40; /* Lower than header but higher than content */
   transition: left 0.3s ease-in-out;
   display: flex;
   flex-direction: column;
@@ -19,7 +18,7 @@
 }
 
 .admin-sidebar nav {
-  padding-top: 60px; /* Space for header */
+  padding-top: 20px; /* Reduced padding since we're already under header */
 }
 
 .admin-sidebar nav ul {
@@ -72,6 +71,7 @@
 .dashboard-content {
   margin-left: 280px;
   padding: 20px;
+  padding-top: 80px; /* Add top padding to account for header */
   padding-bottom: 80px; /* Add extra padding for footer */
   min-height: calc(100vh - 120px); /* Account for header and footer */
 }
@@ -85,8 +85,8 @@
 }
 
 .logout-button {
-  position: absolute; /* Change from fixed to absolute */
-  bottom: 120px; /* Adjust bottom spacing */
+  position: absolute;
+  bottom: 80px; /* Space above footer */
   left: 16px;
   width: calc(280px - 32px); /* Match sidebar width minus padding */
   padding: 14px 20px;
@@ -96,7 +96,7 @@
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   font-weight: 500;
   text-align: center;
-  z-index: 101; /* Keep it above sidebar content */
+  z-index: 41; /* Keep it above sidebar content */
 }
 
 .logout-button:hover {
@@ -104,7 +104,7 @@
   color: #ff8585 !important;
 }
 
-/* Add this new CSS for footer */
+/* Footer styles */
 .footer {
   position: fixed;
   bottom: 0;
@@ -116,40 +116,58 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 1000; /* Highest z-index */
 }
 
-/* --- Desktop: sidebar stays on top --- */
+/* Desktop: sidebar stays open and under header */
 @media (min-width: 768px) {
   .admin-sidebar {
-    left: 0;
-    top: 0;
-    margin-top: 20px;
-    height: 100vh;
-    z-index: 50;
+    left: 0; /* Always visible on desktop */
+    top: 60px; /* Under header */
+    height: calc(100vh - 60px);
+    z-index: 40;
   }
 }
 
-/* --- Mobile: sidebar under header, header stays above sidebar --- */
+/* Mobile: sidebar slides in from left, still under header */
 @media (max-width: 767px) {
   .admin-sidebar {
-    top: 60px; /* Height of header */
-    margin-top: 0;
+    top: 60px; /* Under header */
+    left: -280px; /* Hidden by default */
     height: calc(100vh - 60px);
-    z-index: 1; /* Lower than header (header z-index should be > 1) */
-    border-radius: 0 1rem 1rem 0;
+    z-index: 40; /* Lower than header */
+  }
+
+  .admin-sidebar.open {
+    left: 0;
+  }
+
+  .dashboard-content {
+    margin-left: 0;
+    padding-top: 80px; /* Account for header */
+    padding-bottom: 80px;
+  }
+
+  .main-content {
+    margin-bottom: 60px;
+  }
+
+  .logout-button {
+    width: calc(280px - 32px);
+    left: 16px;
+    bottom: 80px; /* Consistent spacing above footer */
   }
 }
 
 /* Overlay for mobile sidebar */
 .admin-sidebar-overlay {
   position: fixed;
-  top: 0;
+  top: 60px; /* Start under header */
   left: 0;
   right: 0;
   bottom: 0;
   background-color: rgba(0, 0, 0, 0.5);
-  z-index: 40;
+  z-index: 39; /* Below sidebar but above content */
   opacity: 0;
   visibility: hidden;
   transition: all 0.3s ease-in-out;
@@ -160,41 +178,12 @@
   visibility: visible;
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
-  .admin-sidebar {
-    top: 10px;
-    left: -280px;
-    height: calc(100vh - 60px);
-    z-index: 1000;
-  }
-  .admin-sidebar.open {
-    left: 0;
-  }
-
-  .admin-sidebar nav {
-    padding-top: 80px;
-  }
-
-  .dashboard-content {
-    margin-left: 0;
-    padding-bottom: 80px;
-  }
-
-  .main-content {
-    margin-bottom: 60px;
-  }
-
-  .logout-button {
-    width: calc(280px - 32px); /* Keep consistent with desktop */
-    left: 16px; /* Reset left position */
-    transform: none; /* Remove transform */
-    bottom: 20px; /* Consistent spacing */
-    max-width: none; /* Remove max-width limitation */
-  }
-}
-
-/* Add smooth transition for all hover effects */
+/* Smooth transitions */
 * {
   transition: all 0.3s ease;
+}
+
+/* Make sure header has higher z-index than sidebar */
+.header, .admin-header {
+  z-index: 50 !important; /* Higher than sidebar */
 }
