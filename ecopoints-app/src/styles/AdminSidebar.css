@@ -7,7 +7,7 @@
   box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
   position: fixed;
   left: 0;
-  top: 60px; /* Adjust for header height */
+   /* Adjust for header height */
   bottom: 60px; /* Space for footer */
   overflow-y: auto; /* Enable scrolling if content is too long */
   z-index: 100;
