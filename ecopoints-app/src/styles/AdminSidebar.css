@@ -139,7 +139,7 @@
     top: 60px; /* Height of header */
     margin-top: 0;
     height: calc(100vh - 60px);
-    z-index: 1; /* Lower than header (header z-index should be > 1) */
+    z-index: 1001; /* Higher than overlay and main content, lower than header */
     border-radius: 0 1rem 1rem 0;
     box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
   }
@@ -175,7 +175,7 @@
     right: 0;
     bottom: 0;
     background-color: rgba(0, 0, 0, 0.5);
-    z-index: 40;
+    z-index: 1000;
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease-in-out;
