@@ -422,18 +422,52 @@ const Insert = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!user) {
-      console.log('handleSubmit: No user authenticated.');
       setAlert({ type: 'error', message: 'Please log in to submit recyclables.' });
       return;
     }
-
     if (!hasNewData) {
-      console.log('handleSubmit: No new data detected in this session.');
       setAlert({ type: 'warning', message: 'No new recyclables detected in this session.' });
       return;
     }
 
-    console.log('Submitting recyclables:', { bottleCount, canCount });
+    // Prepare records for all detected materials
+    const records = [];
+    if (bottleCount > 0) {
+      records.push({
+        user_id: user.id,
+        material: 'PLASTIC_BOTTLE',
+        quantity: bottleCount,
+        created_at: new Date().toISOString(),
+        device_id: deviceId,
+        session_id: currentSessionId,
+      });
+    }
+    if (canCount > 0) {
+      records.push({
+        user_id: user.id,
+        material: 'CAN',
+        quantity: canCount,
+        created_at: new Date().toISOString(),
+        device_id: deviceId,
+        session_id: currentSessionId,
+      });
+    }
+
+    if (records.length === 0) {
+      setAlert({ type: 'warning', message: 'No bottles or cans detected.' });
+      return;
+    }
+
+    // Insert all records
+    try {
+      const { error } = await supabase.from('recyclables').insert(records);
+      if (error) throw error;
+    } catch (error) {
+      setAlert({ type: 'error', message: 'Failed to save recyclable: ' + error.message });
+      return;
+    }
+
+    // Update stats as before
     const { points, money } = await updateEarnings(bottleCount, canCount);
     setTotalBottleCount(prev => prev + bottleCount);
     setTotalCanCount(prev => prev + canCount);

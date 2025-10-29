@@ -1,10 +1,11 @@
 /* --- Base styles --- */
 .admin-sidebar {
   position: fixed;
-  top: 0;
+  padding-top: 70px;
+  top: 60px; /* Start below the header (assumes header height is 60px) */
   left: -280px;
   width: 280px;
-  height: 100vh;
+  height: calc(100vh - 60px); /* Full height minus header */
   background-color: white;
   box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1.5px 3px rgba(0,0,0,0.08);
   z-index: 50;
@@ -149,7 +150,7 @@
   }
 
   .admin-sidebar nav {
-    padding-top: 120px; /* Push content below header */
+    padding-top: 20px; /* Adjust as needed */
   }
 
   .dashboard-content {
