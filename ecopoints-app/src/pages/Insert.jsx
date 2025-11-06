@@ -437,6 +437,7 @@ const Insert = () => {
         user_id: user.id,
         material: 'PLASTIC_BOTTLE',
         quantity: bottleCount,
+        confidence: 1, // <-- Add this line
         created_at: new Date().toISOString(),
         device_id: deviceId,
         session_id: currentSessionId,
@@ -447,6 +448,7 @@ const Insert = () => {
         user_id: user.id,
         material: 'CAN',
         quantity: canCount,
+        confidence: 1, // <-- Add this line
         created_at: new Date().toISOString(),
         device_id: deviceId,
         session_id: currentSessionId,
