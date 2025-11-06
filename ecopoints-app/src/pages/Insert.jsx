@@ -383,41 +383,26 @@ const Insert = () => {
     }, 500);
   }, [user, deviceId, cleanupUserCommands]);
 
-  const saveUserStats = useCallback(async () => {
-    if (!user) {
-      console.log('saveUserStats: No user authenticated.');
-      return;
-    }
+  const saveUserStats = useCallback(async (stats) => {
+    if (!user) return;
     try {
-      console.log('Saving user stats for user:', user.id);
       const updates = {
         user_id: user.id,
-        total_bottle_count: totalBottleCount + bottleCount,
-        total_can_count: totalCanCount + canCount,
-        total_points: totalPoints + pointsEarned,
-        total_money: parseFloat(totalMoney) + parseFloat(moneyEarned),
+        ...stats,
         updated_at: new Date().toISOString(),
       };
-      console.log('User stats update:', updates);
-
       const { error } = await supabase
         .from('user_stats')
         .upsert(updates, { onConflict: 'user_id' });
-
-      if (error) {
-        console.error('saveUserStats error:', error);
-        throw new Error(`Failed to save user stats: ${error.message}`);
-      }
-      console.log('User stats saved successfully.');
+      if (error) throw error;
       setTotalBottleCount(updates.total_bottle_count);
       setTotalCanCount(updates.total_can_count);
       setTotalPoints(updates.total_points);
       setTotalMoney(updates.total_money.toFixed(2));
     } catch (error) {
-      console.error('saveUserStats error:', error);
       setAlert({ type: 'error', message: error.message });
     }
-  }, [user, totalBottleCount, totalCanCount, totalPoints, totalMoney, bottleCount, canCount, pointsEarned, moneyEarned]);
+  }, [user]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -469,14 +454,16 @@ const Insert = () => {
       return;
     }
 
-    // Update stats as before
+    // After calculating points and money
     const { points, money } = await updateEarnings(bottleCount, canCount);
-    setTotalBottleCount(prev => prev + bottleCount);
-    setTotalCanCount(prev => prev + canCount);
-    setTotalPoints(prev => prev + points);
-    setTotalMoney(prev => (parseFloat(prev) + parseFloat(money)).toFixed(2));
 
-    await saveUserStats();
+    // Save user stats using the new values directly
+    await saveUserStats({
+      total_bottle_count: totalBottleCount + bottleCount,
+      total_can_count: totalCanCount + canCount,
+      total_points: totalPoints + points,
+      total_money: parseFloat(totalMoney) + parseFloat(money),
+    });
 
     setAlert({ type: 'success', message: 'Recyclables recorded!' });
     resetSensorData();
