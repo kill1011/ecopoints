@@ -79,21 +79,18 @@ const Insert = () => {
 
   const updateEarnings = useCallback(async (bottleCount, canCount) => {
     let totalPoints = 0;
-    let totalMoney = 0;
 
     if (bottleCount > 0) {
-      const { points_per_piece, price_per_piece } = await fetchMaterialValues('PLASTIC_BOTTLE');
+      const { points_per_piece } = await fetchMaterialValues('PLASTIC_BOTTLE');
       totalPoints += bottleCount * points_per_piece;
-      totalMoney += bottleCount * price_per_piece;
     }
 
     if (canCount > 0) {
-      const { points_per_piece, price_per_piece } = await fetchMaterialValues('CAN');
+      const { points_per_piece } = await fetchMaterialValues('CAN');
       totalPoints += canCount * points_per_piece;
-      totalMoney += canCount * price_per_piece;
     }
 
-    totalMoney = totalMoney.toFixed(2);
+    const totalMoney = (totalPoints / 100).toFixed(2); // 100 points = 1 balance
     setPointsEarned(totalPoints);
     setMoneyEarned(totalMoney);
     return { points: totalPoints, money: totalMoney };
@@ -462,7 +459,7 @@ const Insert = () => {
       total_bottle_count: totalBottleCount + bottleCount,
       total_can_count: totalCanCount + canCount,
       total_points: totalPoints + points,
-      total_money: parseFloat(totalMoney) + parseFloat(money),
+      total_money: ((totalPoints + points) / 100).toFixed(2),
     });
 
     setAlert({ type: 'success', message: 'Recyclables recorded!' });

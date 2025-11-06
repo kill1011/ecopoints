@@ -362,7 +362,9 @@ const Dashboard = () => {
 
               <div className="stat-card" id="moneyCard">
                 <FontAwesomeIcon icon={faExchangeAlt} className="stat-icon" />
-                <div className="stat-value">₱{stats.money.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                <div className="stat-value">
+                  ₱{(stats.points / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </div>
                 <div className="stat-label">Available Balance</div>
               </div>
 
