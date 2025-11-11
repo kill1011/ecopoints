@@ -75,7 +75,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           <NavItem path="/dashboard" icon={faHome} label="Dashboard" />
           <NavItem path="/insert" icon={faRecycle} label="Insert Points" />
           <NavItem path="/redemption" icon={faWallet} label="Redeem Points" />
-          <NavItem path="/history" icon={faHistory} label="History" />
+          
           <NavItem path="/contact" icon={faEnvelope} label="Contact Us" />
           
           {isAdmin && (
